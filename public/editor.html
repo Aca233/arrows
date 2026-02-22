@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>箭有虚发 - 地图编辑器</title>
+    <link rel="stylesheet" href="editor.css">
+</head>
+
+<body>
+    <!-- 顶部工具栏 -->
+    <header id="toolbar">
+        <div class="toolbar-left">
+            <h1>📐 地图编辑器</h1>
+            <span class="subtitle">箭有虚发 (Arrows Never Miss)</span>
+        </div>
+        <div class="toolbar-center">
+            <div class="tool-group">
+                <button class="tool-btn active" data-tool="place" title="放置墙体 (P)">
+                    <span class="tool-icon">☐</span>
+                    <span class="tool-label">放置</span>
+                </button>
+                <button class="tool-btn" data-tool="select" title="选择/移动 (V)">
+                    <span class="tool-icon">✋</span>
+                    <span class="tool-label">选择</span>
+                </button>
+                <button class="tool-btn" data-tool="delete" title="删除 (X)">
+                    <span class="tool-icon">🗑️</span>
+                    <span class="tool-label">删除</span>
+                </button>
+            </div>
+            <div class="separator"></div>
+            <div class="tool-group">
+                <button class="action-btn" id="btn-undo" title="撤销 (Ctrl+Z)">↩ 撤销</button>
+                <button class="action-btn" id="btn-redo" title="重做 (Ctrl+Y)">↪ 重做</button>
+            </div>
+            <div class="separator"></div>
+            <label class="toggle-label">
+                <input type="checkbox" id="grid-snap" checked>
+                <span>网格吸附</span>
+            </label>
+        </div>
+        <div class="toolbar-right">
+            <button class="action-btn primary" id="btn-save">💾 保存</button>
+            <button class="action-btn" id="btn-export">📤 导出</button>
+            <button class="action-btn" id="btn-import">📥 导入</button>
+        </div>
+    </header>
+
+    <!-- 主体布局 -->
+    <div id="main-layout">
+        <!-- 左侧面板 -->
+        <aside id="side-panel">
+            <!-- 地图选择 -->
+            <section class="panel-section">
+                <h3>🗺️ 地图列表</h3>
+                <div id="map-list" class="map-list"></div>
+                <div class="new-map-row">
+                    <input type="text" id="new-map-id" placeholder="新地图ID" maxlength="30">
+                    <button class="action-btn small" id="btn-new-map">+ 新建</button>
+                </div>
+            </section>
+
+            <!-- 地图属性 -->
+            <section class="panel-section">
+                <h3>📋 地图属性</h3>
+                <div class="prop-row">
+                    <label>名称</label>
+                    <input type="text" id="map-name" placeholder="地图名称">
+                </div>
+                <div class="prop-row">
+                    <label>宽度</label>
+                    <input type="number" id="map-width" value="2000" min="400" max="5000">
+                </div>
+                <div class="prop-row">
+                    <label>高度</label>
+                    <input type="number" id="map-height" value="1200" min="300" max="3000">
+                </div>
+            </section>
+
+            <!-- 选中墙体属性 -->
+            <section class="panel-section" id="wall-props" style="display:none;">
+                <h3>🧱 墙体属性</h3>
+                <div class="prop-row">
+                    <label>X</label>
+                    <input type="number" id="wall-x" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>Y</label>
+                    <input type="number" id="wall-y" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>宽</label>
+                    <input type="number" id="wall-w" min="10" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>高</label>
+                    <input type="number" id="wall-h" min="10" step="1">
+                </div>
+                <button class="action-btn danger small" id="btn-delete-wall">🗑️ 删除此墙体</button>
+            </section>
+
+            <!-- 传送门属性 -->
+            <section class="panel-section" id="portal-props">
+                <h3>🌀 传送门</h3>
+                <div class="quick-row">
+                    <button class="action-btn small" id="btn-quick-add-portal">📍 点击画布快速放置</button>
+                </div>
+                <div id="portal-list" class="entity-list"></div>
+                <div class="prop-row">
+                    <label>ID</label>
+                    <input type="text" id="portal-id" maxlength="24" placeholder="如 p1">
+                </div>
+                <div class="prop-row">
+                    <label>X</label>
+                    <input type="number" id="portal-x" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>Y</label>
+                    <input type="number" id="portal-y" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>半径</label>
+                    <input type="number" id="portal-radius" min="10" step="1" value="40">
+                </div>
+                <div class="prop-row">
+                    <label>目标</label>
+                    <input type="text" id="portal-target" maxlength="24" placeholder="目标ID">
+                </div>
+                <div class="entity-actions">
+                    <button class="action-btn small" id="btn-upsert-portal">＋ 添加/更新</button>
+                    <button class="action-btn danger small" id="btn-delete-portal">🗑 删除</button>
+                </div>
+            </section>
+
+            <!-- 毒区属性 -->
+            <section class="panel-section" id="poison-props">
+                <h3>☣ 毒区</h3>
+                <div class="quick-row">
+                    <button class="action-btn small" id="btn-quick-add-poison">📍 点击画布快速放置</button>
+                </div>
+                <div id="poison-list" class="entity-list"></div>
+                <div class="prop-row">
+                    <label>ID</label>
+                    <input type="text" id="poison-id" maxlength="24" placeholder="如 pz1">
+                </div>
+                <div class="prop-row">
+                    <label>X</label>
+                    <input type="number" id="poison-x" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>Y</label>
+                    <input type="number" id="poison-y" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>半径</label>
+                    <input type="number" id="poison-radius" min="20" step="1" value="120">
+                </div>
+                <div class="prop-row">
+                    <label>DPS</label>
+                    <input type="number" id="poison-dps" min="1" step="1" value="1">
+                </div>
+                <div class="entity-actions">
+                    <button class="action-btn small" id="btn-upsert-poison">＋ 添加/更新</button>
+                    <button class="action-btn danger small" id="btn-delete-poison">🗑 删除</button>
+                </div>
+            </section>
+
+            <!-- 统计信息 -->
+            <section class="panel-section">
+                <h3>📊 统计</h3>
+                <div class="stat-row">
+                    <span>墙体数量</span>
+                    <span id="stat-walls">0</span>
+                </div>
+                <div class="stat-row">
+                    <span>传送门数量</span>
+                    <span id="stat-portals">0</span>
+                </div>
+                <div class="stat-row">
+                    <span>毒区数量</span>
+                    <span id="stat-poison-zones">0</span>
+                </div>
+                <div class="stat-row">
+                    <span>缩放</span>
+                    <span id="stat-zoom">100%</span>
+                </div>
+            </section>
+        </aside>
+
+        <!-- 编辑画布区域 -->
+        <main id="canvas-container">
+            <canvas id="editorCanvas"></canvas>
+            <!-- 状态栏 -->
+            <div id="status-bar">
+                <span id="status-coords">X: 0, Y: 0</span>
+                <span id="status-tool">工具: 放置</span>
+                <span id="status-msg"></span>
+            </div>
+        </main>
+    </div>
+
+    <!-- 隐藏的文件导入 input -->
+    <input type="file" id="file-import" accept=".json" style="display:none;">
+
+    <script src="editor.js"></script>
+</body>
+
+</html>

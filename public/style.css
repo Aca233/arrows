@@ -1,0 +1,228 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #111;
+    color: white;
+    font-family: 'Inter', sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+}
+
+#ui-container {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    pointer-events: none;
+}
+
+h1 {
+    margin: 0 0 10px 0;
+    font-size: 24px;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+#score-board {
+    background: rgba(20, 25, 40, 0.4);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    padding: 15px;
+    border-radius: 12px;
+    min-width: 180px;
+    transition: all 0.3s ease;
+}
+
+#score-board strong {
+    color: #0ff;
+    text-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+    font-weight: 800;
+}
+
+.score-entry {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#game-container {
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+canvas {
+    display: block;
+    cursor: crosshair;
+    touch-action: none;
+    /* 防止移动端滑动屏幕 */
+}
+
+/* === 移动端触控摇杆样式 === */
+#touch-controls {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    /* 让上层容器不阻挡点击，子元素再开启 */
+    z-index: 50;
+    display: flex;
+}
+
+.joystick-zone {
+    flex: 1;
+    height: 100%;
+    pointer-events: auto;
+    /* 开启此区域的触控 */
+}
+
+.stick-base {
+    position: absolute;
+    width: 120px;
+    height: 120px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 2px solid rgba(0, 255, 255, 0.3);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+    pointer-events: none;
+}
+
+.stick-knob {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 50px;
+    height: 50px;
+    background: rgba(0, 255, 255, 0.5);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.8), inset 0 0 10px rgba(255, 255, 255, 0.5);
+    transition: transform 0.05s ease-out;
+    /* 这里的 transform 会在 JS 中被覆盖，但也加点平滑 */
+}
+
+/* 天赋选择面板 (Glassmorphism) */
+#talent-panel {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(10, 15, 30, 0.5);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    padding: 40px;
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    border-radius: 16px;
+    text-align: center;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(0, 255, 255, 0.1);
+    z-index: 100;
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+#talent-panel h2 {
+    margin-top: 0;
+    color: #0ff;
+    text-shadow: 0 0 10px rgba(0, 255, 255, 0.6);
+    font-weight: 800;
+    letter-spacing: 2px;
+}
+
+.talent-btn {
+    display: block;
+    width: 100%;
+    margin: 12px 0;
+    padding: 14px 20px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    background: rgba(0, 255, 255, 0.05);
+    color: #eee;
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    border-radius: 8px;
+    transition: all 0.3s ease;
+}
+
+.talent-btn:hover {
+    background: rgba(0, 255, 255, 0.2);
+    color: #fff;
+    box-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
+    transform: translateY(-2px);
+}
+
+/* 游戏大厅 (Lobby) 界面 */
+#lobby-panel {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(5, 5, 10, 0.8);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 50px 80px;
+    border: 2px solid rgba(0, 255, 255, 0.15);
+    border-radius: 20px;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), inset 0 0 30px rgba(0, 255, 255, 0.05);
+    z-index: 200;
+}
+
+#player-name-input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    color: white;
+    font-size: 18px;
+    padding: 12px 15px;
+    border-radius: 8px;
+    text-align: center;
+    width: 200px;
+    outline: none;
+    transition: all 0.3s ease;
+    font-family: 'Inter', sans-serif;
+}
+
+#player-name-input:focus {
+    border-color: #0ff;
+    box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.coin-display {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    margin: 15px 0;
+}
+
+.menu-btn {
+    display: inline-block;
+    margin: 0 10px;
+    padding: 15px 30px;
+    font-size: 18px;
+    font-weight: 800;
+    cursor: pointer;
+    background: linear-gradient(135deg, rgba(0, 255, 255, 0.2) 0%, rgba(0, 150, 255, 0.1) 100%);
+    color: white;
+    border: 1px solid rgba(0, 255, 255, 0.5);
+    border-radius: 30px;
+    text-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.menu-btn:hover {
+    background: linear-gradient(135deg, rgba(0, 255, 255, 0.4) 0%, rgba(0, 150, 255, 0.3) 100%);
+    box-shadow: 0 10px 20px rgba(0, 255, 255, 0.3), 0 0 0 4px rgba(0, 255, 255, 0.1);
+    transform: translateY(-5px) scale(1.05);
+}
