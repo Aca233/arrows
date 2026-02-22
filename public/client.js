@@ -7,12 +7,14 @@ let myId = null;
 let gameState = { players: {}, arrows: {}, monsters: {}, walls: [], bees: {}, buffs: {}, traps: {} };
 let targetState = null;
 let currentMode = 'standard';
+let roomState = 'idle'; // idle | waiting | playing | round_end
 
 // 特效组件集合
 const particles = [];
 const floatingTexts = [];
 let screenShake = 0;
 let currentRoomId = '';
+let pendingBotOps = [];
 
 // === 摄像机系统 ===
 let camX = 0;  // 摄像机左上角在世界中的 X
@@ -37,6 +39,7 @@ socket.on('init', (id) => {
 socket.on('room_joined', (roomInfo) => {
     if (typeof roomInfo === 'string') {
         currentRoomId = roomInfo;
+        flushPendingBotOps();
         return;
     }
 
@@ -45,8 +48,27 @@ socket.on('room_joined', (roomInfo) => {
         if (roomInfo.mode) {
             currentMode = roomInfo.mode;
         }
+        if (roomInfo.state) {
+            roomState = roomInfo.state;
+        }
+        updateLobbyRoomInfo(roomInfo);
+        flushPendingBotOps();
     }
 });
+
+function flushPendingBotOps() {
+    if (!currentRoomId || pendingBotOps.length === 0) return;
+
+    for (const op of pendingBotOps) {
+        if (op.type === 'add') {
+            socket.emit('add_bot', { difficulty: op.difficulty });
+        } else if (op.type === 'remove') {
+            socket.emit('remove_bot');
+        }
+    }
+
+    pendingBotOps = [];
+}
 
 // 本地经济系统与存档
 let myCoins = parseInt(localStorage.getItem('arrows_coins') || '0');
@@ -110,9 +132,39 @@ function updateLobbyUI() {
     });
 }
 
+function updateLobbyRoomInfo(roomInfo = {}) {
+    const roomIdEl = document.getElementById('lobby-room-id');
+    const roomModeEl = document.getElementById('lobby-room-mode');
+    const roomStateEl = document.getElementById('lobby-room-state');
+    const roomCountEl = document.getElementById('lobby-player-count');
+
+    if (roomIdEl) roomIdEl.innerText = currentRoomId || '未创建';
+    if (roomModeEl) roomModeEl.innerText = currentMode;
+
+    const mappedState = roomInfo.state || roomState || 'idle';
+    if (mappedState) {
+        roomState = mappedState;
+    }
+
+    const stateMap = {
+        idle: '未创建',
+        waiting: '等待中',
+        playing: '游戏中',
+        round_end: '回合结算'
+    };
+    if (roomStateEl) roomStateEl.innerText = stateMap[roomState] || roomState;
+
+    if (roomCountEl) {
+        const players = typeof roomInfo.players === 'number' ? roomInfo.players : 0;
+        const total = typeof roomInfo.total === 'number' ? roomInfo.total : players;
+        roomCountEl.innerText = `${players} 真人 / ${total} 总人数`;
+    }
+}
+
 // 页面加载完成后为大厅天赋按钮绑定交互
 document.addEventListener('DOMContentLoaded', () => {
     updateLobbyUI();
+    updateLobbyRoomInfo({ state: roomState });
 
     const talentBtns = document.querySelectorAll('#talent-selection .talent-btn');
     talentBtns.forEach(btn => {
@@ -197,8 +249,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// 从大厅加入游戏
-window.joinGame = function (mode) {
+// 在大厅创建/加入房间（不立即开始）
+window.createRoom = function () {
     if (window.initAudio) window.initAudio();
     if (window.SoundFX) SoundFX.ding();
 
@@ -209,11 +261,37 @@ window.joinGame = function (mode) {
     const roomInput = document.getElementById('room-id-input');
     const roomIdInput = roomInput ? roomInput.value.trim() : '';
 
-    const requestedMode = mode || 'standard';
-    currentMode = requestedMode;
+    socket.emit('join', {
+        roomId: roomIdInput,
+        name: playerName,
+        mode: currentMode,
+        talent: selectedTalent,
+        weapon: selectedWeapon
+    });
 
-    // 向服务器请求加入指定模式，并带上刚通过备战界面挑选的天赋、武器及房号
-    socket.emit('join', { roomId: roomIdInput, name: playerName, mode: requestedMode, talent: selectedTalent, weapon: selectedWeapon });
+    roomState = 'waiting';
+    updateLobbyRoomInfo({ state: roomState });
+};
+
+window.setRoomMode = function (mode) {
+    if (!currentRoomId) {
+        alert('请先创建/加入房间');
+        return;
+    }
+
+    const nextMode = mode || 'standard';
+    currentMode = nextMode;
+    updateLobbyRoomInfo({ mode: currentMode });
+    socket.emit('set_room_mode', { mode: nextMode });
+};
+
+window.startGame = function () {
+    if (!currentRoomId) {
+        alert('请先创建/加入房间');
+        return;
+    }
+
+    socket.emit('start_room');
 
     // 隐藏大厅，显示游戏画面
     const lobbyPanel = document.getElementById('lobby-panel');
@@ -222,12 +300,144 @@ window.joinGame = function (mode) {
     if (gameContainer) gameContainer.style.display = 'flex';
 };
 
+// === 房间浏览器 (Room Browser) ===
+window.openRoomBrowser = function () {
+    if (window.initAudio) window.initAudio();
+    if (window.SoundFX) SoundFX.ding();
+
+    const modal = document.getElementById('room-browser-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+        refreshRoomList();
+    }
+};
+
+window.closeRoomBrowser = function () {
+    if (window.initAudio) window.initAudio();
+    if (window.SoundFX) SoundFX.ding();
+
+    const modal = document.getElementById('room-browser-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+};
+
+window.refreshRoomList = function () {
+    // UI反馈：显示加载中
+    const container = document.getElementById('room-list-container');
+    if (container) {
+        container.innerHTML = '<div style="text-align:center; padding: 20px; color:#aaa;">正在获取房间列表...</div>';
+    }
+    socket.emit('get_room_list');
+};
+
+socket.on('room_list', (list) => {
+    const container = document.getElementById('room-list-container');
+    if (!container) return;
+
+    if (!list || list.length === 0) {
+        container.innerHTML = '<div style="text-align:center; padding: 20px; color:#aaa;">当前没有活跃房间。自己创建一个吧！</div>';
+        return;
+    }
+
+    const stateMap = {
+        idle: '未创建',
+        waiting: '等待中',
+        playing: '游戏中',
+        round_end: '回合结算'
+    };
+
+    const modeMap = {
+        standard: '标准乱斗',
+        dark_forest: '黑暗森林',
+        sniper_duel: '狙击对决'
+    };
+
+    let html = '';
+    list.forEach(room => {
+        const stateColor = room.state === 'waiting' ? '#0f0' : (room.state === 'playing' ? '#f80' : '#888');
+        const modeStr = modeMap[room.mode] || room.mode;
+        const stateStr = stateMap[room.state] || room.state;
+        const isFull = room.total >= 20;
+
+        html += `
+        <div class="room-item">
+            <div class="room-info">
+                <div class="room-info-title">房间号: ${room.roomId}</div>
+                <div class="room-info-details">
+                    <span>模式: ${modeStr}</span>
+                    <span style="color: ${stateColor}">状态: ${stateStr}</span>
+                    <span>人数: ${room.humans} / ${room.total} (满20)</span>
+                </div>
+            </div>
+            <button class="menu-btn small-btn" 
+                style="padding: 10px 15px;"
+                onclick="joinRoomFromList('${room.roomId}', '${room.mode}')"
+                ${isFull ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
+                ${isFull ? '已满' : '加入'}
+            </button>
+        </div>`;
+    });
+
+    container.innerHTML = html;
+});
+
+window.joinRoomFromList = function (roomId, mode) {
+    if (window.initAudio) window.initAudio();
+    if (window.SoundFX) SoundFX.ding();
+
+    // 关闭模态框
+    closeRoomBrowser();
+
+    // 填充输入框以更新UI显示
+    const roomInput = document.getElementById('room-id-input');
+    if (roomInput) roomInput.value = roomId;
+
+    const nameInputEl = document.getElementById('player-name-input');
+    const nameInput = nameInputEl && nameInputEl.value ? nameInputEl.value.trim() : '';
+    const playerName = nameInput || '特工';
+
+    currentMode = mode;
+
+    socket.emit('join', {
+        roomId: roomId,
+        name: playerName,
+        mode: mode,
+        talent: selectedTalent,
+        weapon: selectedWeapon
+    });
+
+    roomState = 'waiting';
+    updateLobbyRoomInfo({ state: roomState, mode: mode });
+};
+
 // === Bot 管理函数 ===
 window.addBot = function (difficulty) {
-    socket.emit('add_bot', { difficulty: difficulty || 'medium' });
+    const resolvedDifficulty = difficulty || 'medium';
+    if (!currentRoomId) {
+        pendingBotOps.push({ type: 'add', difficulty: resolvedDifficulty });
+        alert(`已预设 1 个 ${resolvedDifficulty} AI 对手，创建房间后会自动添加`);
+        return;
+    }
+    if (roomState !== 'waiting') {
+        alert('请在“等待中”状态下添加 AI 对手');
+        return;
+    }
+
+    socket.emit('add_bot', { difficulty: resolvedDifficulty });
 };
 
 window.removeBot = function () {
+    if (!currentRoomId) {
+        pendingBotOps.push({ type: 'remove' });
+        alert('已预设移除 1 个 AI 对手，创建房间后会自动执行');
+        return;
+    }
+    if (roomState !== 'waiting') {
+        alert('请在“等待中”状态下移除 AI 对手');
+        return;
+    }
+
     socket.emit('remove_bot');
 };
 
@@ -237,9 +447,21 @@ socket.on('state', (state) => {
     if (state.mode) {
         currentMode = state.mode;
     }
+    if (state.state) {
+        roomState = state.state;
+    }
     if (!currentRoomId && state.id) {
         currentRoomId = state.id;
+        flushPendingBotOps();
     }
+
+    updateLobbyRoomInfo({
+        roomId: currentRoomId,
+        mode: currentMode,
+        state: roomState,
+        players: Object.values(state.players || {}).filter(p => !p.id.startsWith('bot_')).length,
+        total: Object.keys(state.players || {}).length
+    });
 
     targetState = state;
     if (Object.keys(gameState.players).length === 0) {
@@ -325,6 +547,7 @@ socket.on('chat', (msg) => {
 });
 
 window.addEventListener('keydown', (e) => {
+    if (!e.key) return; // Ignore events without a key property
     const key = e.key.toLowerCase();
     if (keys.hasOwnProperty(key)) {
         keys[key] = true;
@@ -333,6 +556,7 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keyup', (e) => {
+    if (!e.key) return; // Ignore events without a key property
     const key = e.key.toLowerCase();
     if (keys.hasOwnProperty(key)) {
         keys[key] = false;

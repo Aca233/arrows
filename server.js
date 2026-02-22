@@ -26,7 +26,32 @@ app.get('/favicon.ico', (req, res) => {
 
 const rooms = {}; // { roomId: roomState }
 const playerRooms = {}; // { socketId: roomId }
+const VALID_MODES = new Set(['standard', 'dark_forest', 'sniper_duel']);
 
+function normalizeMode(modeStr) {
+    return VALID_MODES.has(modeStr) ? modeStr : 'standard';
+}
+
+function decoratePlayerName(name, talent) {
+    let playerName = name || '特工';
+    if (talent === 'paranoid') playerName += ' [偏执]';
+    else if (talent === 'fantasy') playerName += ' [幻想]';
+    else if (talent === 'insidious') playerName += ' [阴险]';
+    else if (talent === 'clairvoyance') playerName += ' [明察]';
+    return playerName;
+}
+
+function applyModeStats(player, mode) {
+    if (!player) return;
+    player.roomMode = mode;
+    if (mode === 'sniper_duel') {
+        player.baseSpeed = 350;
+        player.speed = 350;
+    } else {
+        player.baseSpeed = 220;
+        player.speed = 220;
+    }
+}
 
 function createRoom(roomId, mode = 'standard') {
     return {
@@ -41,7 +66,7 @@ function createRoom(roomId, mode = 'standard') {
         bees: {},
         buffs: {},
         traps: {},
-        round: 1,
+        round: 0,
         state: 'waiting', // waiting, playing, round_end
         countdown: 0,
         safeZone: { x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2, radius: Math.max(GAME_WIDTH, GAME_HEIGHT) },
@@ -83,9 +108,9 @@ function addBot(room, difficulty = 'medium') {
         botColor
     );
     room.players[botId].talent = 'none';
-    room.players[botId].roomMode = room.mode;
     room.players[botId].coinsEarned = 0;
     room.players[botId].isBot = true;
+    applyModeStats(room.players[botId], room.mode);
 
     room.botBrains[botId] = new BotBrain(botId, difficulty);
     console.log(`[Room ${room.id}] Bot added: ${botName} (${difficulty}) [${botId}]`);
@@ -147,7 +172,7 @@ app.post('/api/maps/:id', (req, res) => {
 });
 
 function getOrCreateRoom(modeStr, requestRoomId = '') {
-    const normalizedMode = modeStr || 'standard';
+    const normalizedMode = normalizeMode(modeStr);
     const normalizedRoomId = (requestRoomId || '').trim();
 
     if (normalizedRoomId) {
@@ -194,196 +219,303 @@ io.on('connection', (socket) => {
 
     socket.on('join', (data = {}) => {
         const { roomId, name, mode, talent, weapon } = data;
-        let playerName = name || `Player_${socket.id.substring(0, 4)}`;
+        const normalizedMode = normalizeMode(mode);
+        const requestedRoomId = (roomId || '').trim();
+        const previousRoomId = playerRooms[socket.id];
 
-        if (talent === 'paranoid') playerName += ' [偏执]';
-        else if (talent === 'fantasy') playerName += ' [幻想]';
-        else if (talent === 'insidious') playerName += ' [阴险]';
-        else if (talent === 'clairvoyance') playerName += ' [明察]';
+        if (previousRoomId && rooms[previousRoomId] && previousRoomId !== requestedRoomId) {
+            socket.leave(previousRoomId);
+            delete rooms[previousRoomId].players[socket.id];
 
-        const requestedMode = mode || 'standard';
-        const room = getOrCreateRoom(requestedMode, roomId);
-        const effectiveMode = room.mode || requestedMode;
+            const hasHumans = Object.keys(rooms[previousRoomId].players).some(pid => !pid.startsWith('bot_'));
+            if (!hasHumans) {
+                console.log(`[Server] Room ${previousRoomId} empty after switch. Destroying...`);
+                delete rooms[previousRoomId];
+            }
+        }
 
-        playerRooms[socket.id] = room.id;
-        socket.join(room.id);
-        socket.emit('room_joined', { roomId: room.id, mode: effectiveMode });
+        const room = getOrCreateRoom(normalizedMode, requestedRoomId);
+        const effectiveMode = normalizeMode(room.mode);
 
         room.players[socket.id] = new Player(
             socket.id,
             Math.random() * (GAME_WIDTH - 40) + 20,
             Math.random() * (GAME_HEIGHT - 40) + 20,
-            playerName,
+            decoratePlayerName(name, talent),
             `hsl(${Math.random() * 360}, 100%, 50%)`
         );
 
         const player = room.players[socket.id];
-        player.roomMode = effectiveMode;
         player.talent = talent || 'none';
         player.weapon = weapon || 'bow';
         player.coinsEarned = 0;
+        applyModeStats(player, effectiveMode);
 
-        if (effectiveMode === 'sniper_duel') {
-            player.baseSpeed = 350;
-            player.speed = 350;
+        playerRooms[socket.id] = room.id;
+        socket.join(room.id);
+
+        const humanCount = Object.keys(room.players).filter(id => !id.startsWith('bot_')).length;
+        const totalCount = Object.keys(room.players).length;
+        socket.emit('room_joined', {
+            roomId: room.id,
+            mode: effectiveMode,
+            state: room.state,
+            players: humanCount,
+            total: totalCount
+        });
+
+        console.log(`[Room ${room.id}] Player joined: ${player.name} | Talent: ${player.talent} | Mode: ${effectiveMode}`);
+    });
+
+    socket.on('set_room_mode', (data = {}) => {
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+        if (room.state !== 'waiting') return;
+
+        const nextMode = normalizeMode(data.mode);
+        room.mode = nextMode;
+
+        const mapData = loadMap(nextMode);
+        room.walls = mapData ? (mapData.walls || []) : [];
+        room.portals = mapData ? (mapData.portals || []) : [];
+        room.poisonZones = mapData ? (mapData.poisonZones || []) : [];
+
+        for (const p of Object.values(room.players)) {
+            applyModeStats(p, nextMode);
         }
 
-        console.log(`[Room ${room.id}] Player joined: ${playerName} | Talent: ${talent} | Mode: ${effectiveMode}`);
+        io.to(room.id).emit('room_joined', {
+            roomId: room.id,
+            mode: room.mode,
+            state: room.state,
+            players: Object.keys(room.players).filter(id => !id.startsWith('bot_')).length,
+            total: Object.keys(room.players).length
+        });
+        io.to(room.id).emit('chat', `房间模式已切换为 [${nextMode}]`);
+    });
+
+    socket.on('start_room', () => {
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+        if (room.state !== 'waiting') return;
+
+        if (Object.keys(room.players).length < 1) return;
+
+        startNewRound(room);
+        io.to(room.id).emit('chat', `对局开始！模式: [${room.mode}]`);
+    });
+
+    socket.on('get_room_list', () => {
+        const roomList = [];
+        for (const [id, room] of Object.entries(rooms)) {
+            const humanCount = Object.keys(room.players).filter(pid => !pid.startsWith('bot_')).length;
+            const totalCount = Object.keys(room.players).length;
+            roomList.push({
+                roomId: room.id,
+                mode: room.mode,
+                state: room.state,
+                humans: humanCount,
+                total: totalCount
+            });
+        }
+        socket.emit('room_list', roomList);
     });
 
     socket.on('skill', () => {
-    const roomId = playerRooms[socket.id];
-    if (!roomId || !rooms[roomId]) return;
-    const room = rooms[roomId];
-    const player = room.players[socket.id];
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+        if (room.state !== 'playing') return;
 
-    if (player && !player.isDead && player.talent === 'clairvoyance') {
-        if (!player.radarOn && !player.radarCooldown) {
-            player.radarOn = true;
-            player.radarCooldown = 3;
-            setTimeout(() => {
-                if (rooms[roomId] && rooms[roomId].players[socket.id]) {
-                    rooms[roomId].players[socket.id].radarOn = false;
-                }
-            }, 1000);
+        const player = room.players[socket.id];
+        if (player && !player.isDead && player.talent === 'clairvoyance') {
+            if (!player.radarOn && !player.radarCooldown) {
+                player.radarOn = true;
+                player.radarCooldown = 3;
+                setTimeout(() => {
+                    if (rooms[roomId] && rooms[roomId].players[socket.id]) {
+                        rooms[roomId].players[socket.id].radarOn = false;
+                    }
+                }, 1000);
+            }
         }
-    }
-});
+    });
 
-socket.on('charge_start', () => {
-    const roomId = playerRooms[socket.id];
-    if (!roomId || !rooms[roomId]) return;
-    const player = rooms[roomId].players[socket.id];
-    if (player && !player.isDead) {
-        player.isCharging = true;
-        player.speed = player.baseSpeed * 0.4;
-    }
-});
+    socket.on('charge_start', () => {
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+        if (room.state !== 'playing') return;
 
-socket.on('charge_end', () => {
-    const roomId = playerRooms[socket.id];
-    if (!roomId || !rooms[roomId]) return;
-    const player = rooms[roomId].players[socket.id];
-    if (player && !player.isDead) {
-        player.isCharging = false;
-        if (player.buffExp <= 0) {
-            player.speed = player.baseSpeed;
+        const player = room.players[socket.id];
+        if (player && !player.isDead) {
+            player.isCharging = true;
+            player.speed = player.baseSpeed * 0.4;
         }
-    }
-});
+    });
 
-socket.on('input', (inputData) => {
-    const roomId = playerRooms[socket.id];
-    if (!roomId || !rooms[roomId]) return;
-    const player = rooms[roomId].players[socket.id];
-    if (player && !player.isDead) {
-        player.vx = inputData.x * player.speed;
-        player.vy = inputData.y * player.speed;
-    }
-});
+    socket.on('charge_end', () => {
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+        if (room.state !== 'playing') return;
 
-socket.on('shoot', (targetData) => {
-    const roomId = playerRooms[socket.id];
-    if (!roomId || !rooms[roomId]) return;
-    const room = rooms[roomId];
-    const player = room.players[socket.id];
-
-    if (player && !player.isDead && player.talent) {
-        const dx = targetData.x - player.x;
-        const dy = targetData.y - player.y;
-
-        const weaponStats = WEAPONS[player.weapon] || WEAPONS['bow'];
-        const charge = Math.max(0, Math.min(targetData.charge || 0, 1));
-
-        let amount = weaponStats.amount;
-        let spreadAngle = weaponStats.spreadAngle;
-        if (player.hasMultishot) {
-            amount = Math.max(amount, 3);
-            if (spreadAngle === 0) spreadAngle = Math.PI / 12;
+        const player = room.players[socket.id];
+        if (player && !player.isDead) {
+            player.isCharging = false;
+            if (player.buffExp <= 0) {
+                player.speed = player.baseSpeed;
+            }
         }
+    });
 
-        let baseSpeed = weaponStats.speedBase + charge * weaponStats.speedMultiplier;
-        if (player.talent === 'paranoid') {
-            baseSpeed *= 0.8;
+    socket.on('input', (inputData) => {
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+        if (room.state !== 'playing') return;
+
+        const player = room.players[socket.id];
+        if (player && !player.isDead) {
+            player.vx = inputData.x * player.speed;
+            player.vy = inputData.y * player.speed;
         }
-        if (player.roomMode === 'sniper_duel') {
-            baseSpeed *= 2;
-        }
+    });
 
-        const arrowLifeTime = weaponStats.lifeBase + charge * weaponStats.lifeMultiplier;
-        let inaccuracy = (1 - charge) * weaponStats.inaccuracyBase;
-        if (targetData.moving) {
-            inaccuracy += weaponStats.movingInaccuracy;
-        }
+    socket.on('shoot', (targetData) => {
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+        if (room.state !== 'playing') return;
 
-        let baseAngle = Math.atan2(dy, dx);
+        const player = room.players[socket.id];
 
-        for (let i = 0; i < amount; i++) {
-            let currentAngle = baseAngle;
-            if (amount > 1) {
-                currentAngle = baseAngle + (i - (amount - 1) / 2) * spreadAngle;
+        if (player && !player.isDead && player.talent) {
+            const dx = targetData.x - player.x;
+            const dy = targetData.y - player.y;
+
+            const weaponStats = WEAPONS[player.weapon] || WEAPONS['bow'];
+            const charge = Math.max(0, Math.min(targetData.charge || 0, 1));
+
+            let amount = weaponStats.amount;
+            let spreadAngle = weaponStats.spreadAngle;
+            if (player.hasMultishot) {
+                amount = Math.max(amount, 3);
+                if (spreadAngle === 0) spreadAngle = Math.PI / 12;
             }
 
-            currentAngle += (Math.random() - 0.5) * inaccuracy * 2;
-
-            let curDx = Math.cos(currentAngle);
-            let curDy = Math.sin(currentAngle);
-
-            const arrowId = `arrow_${room.counters.arrow++}`;
-            const arrow = new Arrow(arrowId, socket.id, player.x, player.y, curDx, curDy, baseSpeed);
-            arrow.lifeTime = arrowLifeTime;
-            arrow.charge = charge;
-            arrow.talent = player.talent;
-            arrow.damage = weaponStats.damageBase + Math.floor(charge * weaponStats.damageMultiplier);
-            arrow.pierce = weaponStats.pierce;
-
-            if (player.talent === 'poison') arrow.color = '#00ff00';
-            if (player.talent === 'lightning') arrow.color = '#00aaff';
-
+            let baseSpeed = weaponStats.speedBase + charge * weaponStats.speedMultiplier;
             if (player.talent === 'paranoid') {
-                arrow.isParanoid = true;
-                arrow.radius = 8;
+                baseSpeed *= 0.8;
             }
-            if (player.talent === 'fantasy') arrow.isFantasy = true;
-            if (player.talent === 'insidious') arrow.isInsidious = true;
-            if (player.talent === 'clairvoyance') arrow.speed *= 1.5;
+            if (player.roomMode === 'sniper_duel') {
+                baseSpeed *= 2;
+            }
 
-            room.arrows[arrowId] = arrow;
+            const arrowLifeTime = weaponStats.lifeBase + charge * weaponStats.lifeMultiplier;
+            let inaccuracy = (1 - charge) * weaponStats.inaccuracyBase;
+            if (targetData.moving) {
+                inaccuracy += weaponStats.movingInaccuracy;
+            }
+
+            let baseAngle = Math.atan2(dy, dx);
+
+            for (let i = 0; i < amount; i++) {
+                let currentAngle = baseAngle;
+                if (amount > 1) {
+                    currentAngle = baseAngle + (i - (amount - 1) / 2) * spreadAngle;
+                }
+
+                currentAngle += (Math.random() - 0.5) * inaccuracy * 2;
+
+                let curDx = Math.cos(currentAngle);
+                let curDy = Math.sin(currentAngle);
+
+                const arrowId = `arrow_${room.counters.arrow++}`;
+                const arrow = new Arrow(arrowId, socket.id, player.x, player.y, curDx, curDy, baseSpeed);
+                arrow.lifeTime = arrowLifeTime;
+                arrow.charge = charge;
+                arrow.talent = player.talent;
+                arrow.damage = weaponStats.damageBase + Math.floor(charge * weaponStats.damageMultiplier);
+                arrow.pierce = weaponStats.pierce;
+
+                if (player.talent === 'poison') arrow.color = '#00ff00';
+                if (player.talent === 'lightning') arrow.color = '#00aaff';
+
+                if (player.talent === 'paranoid') {
+                    arrow.isParanoid = true;
+                    arrow.radius = 8;
+                }
+                if (player.talent === 'fantasy') arrow.isFantasy = true;
+                if (player.talent === 'insidious') arrow.isInsidious = true;
+                if (player.talent === 'clairvoyance') arrow.speed *= 1.5;
+
+                room.arrows[arrowId] = arrow;
+            }
         }
-    }
-});
+    });
 
-// === Bot 管理事件 ===
-socket.on('add_bot', (data) => {
-    const roomId = playerRooms[socket.id];
-    if (!roomId || !rooms[roomId]) return;
-    const difficulty = (data && data.difficulty) || 'medium';
-    addBot(rooms[roomId], difficulty);
-    io.to(roomId).emit('chat', `Bot 已加入游戏 [${difficulty}]`);
-});
+    // === Bot 管理事件 ===
+    socket.on('add_bot', (data) => {
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
 
-socket.on('remove_bot', () => {
-    const roomId = playerRooms[socket.id];
-    if (!roomId || !rooms[roomId]) return;
-    removeBot(rooms[roomId]);
-    io.to(roomId).emit('chat', `一个 Bot 已被移除`);
-});
+        const room = rooms[roomId];
+        if (room.state !== 'waiting') return;
 
-socket.on('disconnect', () => {
-    console.log(`[Server] Player disconnected: ${socket.id}`);
-    const roomId = playerRooms[socket.id];
-    if (roomId && rooms[roomId]) {
-        delete rooms[roomId].players[socket.id];
+        const difficulty = (data && data.difficulty) || 'medium';
+        addBot(room, difficulty);
 
-        // 房间内没有活人则清理房间
-        const hasHumans = Object.keys(rooms[roomId].players).some(pid => !pid.startsWith('bot_'));
-        if (!hasHumans) {
-            console.log(`[Server] Room ${roomId} empty. Destroying...`);
-            delete rooms[roomId];
+        const humanCount = Object.keys(room.players).filter(id => !id.startsWith('bot_')).length;
+        const totalCount = Object.keys(room.players).length;
+        io.to(room.id).emit('room_joined', {
+            roomId: room.id,
+            mode: room.mode,
+            state: room.state,
+            players: humanCount,
+            total: totalCount
+        });
+        io.to(room.id).emit('chat', `Bot 已加入房间 [${difficulty}]`);
+    });
+
+    socket.on('remove_bot', () => {
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
+
+        const room = rooms[roomId];
+        if (room.state !== 'waiting') return;
+
+        removeBot(room);
+
+        const humanCount = Object.keys(room.players).filter(id => !id.startsWith('bot_')).length;
+        const totalCount = Object.keys(room.players).length;
+        io.to(room.id).emit('room_joined', {
+            roomId: room.id,
+            mode: room.mode,
+            state: room.state,
+            players: humanCount,
+            total: totalCount
+        });
+        io.to(room.id).emit('chat', `一个 Bot 已被移除`);
+    });
+
+    socket.on('disconnect', () => {
+        console.log(`[Server] Player disconnected: ${socket.id}`);
+        const roomId = playerRooms[socket.id];
+        if (roomId && rooms[roomId]) {
+            delete rooms[roomId].players[socket.id];
+
+            // 房间内没有活人则清理房间
+            const hasHumans = Object.keys(rooms[roomId].players).some(pid => !pid.startsWith('bot_'));
+            if (!hasHumans) {
+                console.log(`[Server] Room ${roomId} empty. Destroying...`);
+                delete rooms[roomId];
+            }
         }
-    }
-    delete playerRooms[socket.id];
-});
+        delete playerRooms[socket.id];
+    });
 });
 
 // Update loop (60 FPS)
@@ -395,6 +527,11 @@ setInterval(() => {
 
     for (const roomId in rooms) {
         const room = rooms[roomId];
+
+        if (room.state === 'waiting') {
+            io.to(room.id).emit('state', room);
+            continue;
+        }
 
         // === 更新所有 Bot AI ===
         for (const [botId, brain] of Object.entries(room.botBrains)) {
@@ -1141,8 +1278,11 @@ function startNewRound(room) {
     room.bees = {};
     room.buffs = {};
     room.traps = {};
+    room.safeZone = { x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2, radius: Math.max(GAME_WIDTH, GAME_HEIGHT) };
+    room.safeZoneShrinkTimer = 0;
 
     for (const [id, player] of Object.entries(room.players)) {
+        applyModeStats(player, room.mode);
         player.isDead = false;
         player.x = Math.random() * (GAME_WIDTH - 40) + 20;
         player.y = Math.random() * (GAME_HEIGHT - 40) + 20;
@@ -1179,7 +1319,7 @@ function startNewRound(room) {
     }
 }
 
-const PORT = parseInt(process.env.PORT, 10) || 3000;
+const PORT = parseInt(process.env.PORT, 10) || 8080;
 const HOST = '0.0.0.0';
 
 server.listen(PORT, HOST, () => {

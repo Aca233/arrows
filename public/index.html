@@ -35,71 +35,112 @@
     <!-- 游戏主大厅 -->
     <div id="lobby-panel">
         <h1 style="font-size: 48px; margin-bottom: 5px;">箭有虚发</h1>
-        <p style="color: #0ff; margin-top: 0; font-size: 18px; text-shadow: 0 0 10px cyan;">Arrows Never Miss</p>
+        <p style="color: #0ff; margin-top: 0; font-size: 18px; text-shadow: 0 0 10px cyan; letter-spacing: 2px;">Arrows
+            Never Miss</p>
 
-        <div style="margin: 20px 0;">
-            <input type="text" id="player-name-input" placeholder="输入你的代号" maxlength="10">
-        </div>
+        <div id="lobby-content">
+            <!-- 左栏：玩家与房间设置 -->
+            <div class="lobby-column">
+                <h2 class="column-title">🎮 游戏房间</h2>
 
-        <div style="margin: 20px 0;">
-            <input type="text" id="room-id-input" placeholder="输入房号 (留空随机分配)" maxlength="15"
-                style="border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(0, 0, 0, 0.5); color: #fff; padding: 10px; border-radius: 5px; text-align: center; font-size: 16px;">
-        </div>
+                <div class="input-group">
+                    <input type="text" id="player-name-input" placeholder="输入代号" maxlength="10">
+                    <input type="text" id="room-id-input" placeholder="输入房号" maxlength="15">
+                </div>
 
-        <div class="coin-display">
-            持有硬币: <span id="coin-count" style="color: gold; text-shadow: 0 0 5px orange;">0</span>
-        </div>
+                <!-- 房间准备区 -->
+                <div id="room-staging" class="panel-section room-section">
+                    <div class="section-header">
+                        <h3>🏠 房间状态</h3>
+                        <div class="btn-group">
+                            <button class="menu-btn small-btn" onclick="openRoomBrowser()">🌍 浏览房间</button>
+                            <button class="menu-btn small-btn" onclick="createRoom()">新建/加入</button>
+                        </div>
+                    </div>
 
-        <!-- 局外天赋备选区 -->
-        <div id="talent-selection"
-            style="margin: 20px 0; max-height: 250px; overflow-y: auto; text-align: left; padding: 10px; border: 1px solid rgba(0, 255, 255, 0.2); border-radius: 10px; background: rgba(0, 0, 0, 0.4);">
-            <h3 style="margin-top: 0; color: #aaa; text-align: center; font-size: 16px;">选择出战天赋</h3>
-            <button class="talent-btn selected-talent" data-talent="none">无 (标准加成)</button>
-            <button class="talent-btn" data-talent="paranoid">偏执 (重弩慢速，未命中不生怪)</button>
-            <button class="talent-btn" data-talent="fantasy">幻想 (怪物的形态更加不可捉摸)</button>
-            <button class="talent-btn" data-talent="insidious">阴险 (射偏的箭变成隐形地雷)</button>
-            <button class="talent-btn" data-talent="clairvoyance">明察 (子弹极快，可按空格广域扫描)</button>
-            <button class="talent-btn" data-talent="shield">护盾 (自动生成护盾抵消1次伤害 - 100币)</button>
-            <button class="talent-btn" data-talent="poison">毒箭 (使目标中毒持续掉血 - 100币)</button>
-            <button class="talent-btn" data-talent="lightning">⚡雷矢 (命中概率触发连锁闪电 - 150币)</button>
-        </div>
+                    <div class="status-board">
+                        <div class="status-row"><span>房号:</span> <strong id="lobby-room-id">未创建</strong></div>
+                        <div class="status-row"><span>模式:</span> <strong id="lobby-room-mode">standard</strong></div>
+                        <div class="status-row"><span>状态:</span> <strong id="lobby-room-state">等待中</strong></div>
+                        <div class="status-row"><span>人数:</span> <strong id="lobby-player-count">0</strong></div>
+                    </div>
+                    <div class="section-label">选择地图</div>
+                    <div class="btn-group">
+                        <button class="menu-btn mode-btn" onclick="setRoomMode('standard')">标准</button>
+                        <button class="menu-btn mode-btn" onclick="setRoomMode('dark_forest')">暗林</button>
+                        <button class="menu-btn mode-btn" onclick="setRoomMode('sniper_duel')">狙击</button>
+                    </div>
+                </div>
 
-        <!-- 武器备选区 -->
-        <div id="weapon-selection"
-            style="margin: 20px 0; max-height: 200px; overflow-y: auto; text-align: left; padding: 10px; border: 1px solid rgba(255, 100, 100, 0.2); border-radius: 10px; background: rgba(0, 0, 0, 0.4);">
-            <h3 style="margin-top: 0; color: #aaa; text-align: center; font-size: 16px;">选择装备武器</h3>
-            <button class="weapon-btn selected-weapon" data-weapon="bow">普通长弓 (初始)</button>
-            <button class="weapon-btn" data-weapon="shortbow">速射短弓 (高射速、低伤害 - 80币)</button>
-            <button class="weapon-btn" data-weapon="crossbow">穿透十字弩 (慢蓄力、高伤穿透 - 150币)</button>
-            <button class="weapon-btn" data-weapon="dart">散射飞镖 (无蓄力、扇形发射 - 200币)</button>
-        </div>
+                <!-- Bot 管理区 -->
+                <div id="bot-controls" class="panel-section bot-section">
+                    <h3>🤖 AI 对手</h3>
+                    <div class="bot-grid">
+                        <button class="menu-btn small-btn" onclick="addBot('easy')">+ 简单</button>
+                        <button class="menu-btn small-btn" onclick="addBot('medium')">+ 中等</button>
+                        <button class="menu-btn small-btn" onclick="addBot('hard')">+ 困难</button>
+                        <button class="menu-btn small-btn danger-btn" onclick="removeBot()">- 移除</button>
+                    </div>
+                </div>
+            </div>
 
-        <!-- Bot 管理区 -->
-        <div id="bot-controls"
-            style="margin: 15px 0; padding: 10px; border: 1px solid rgba(255, 165, 0, 0.3); border-radius: 10px; background: rgba(0, 0, 0, 0.4);">
-            <h3 style="margin-top: 0; color: #ffa500; text-align: center; font-size: 16px;">🤖 AI 对手</h3>
-            <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;">
-                <button class="menu-btn" style="font-size: 13px; padding: 6px 12px;" onclick="addBot('easy')">+ 简单
-                    Bot</button>
-                <button class="menu-btn" style="font-size: 13px; padding: 6px 12px;" onclick="addBot('medium')">+ 中等
-                    Bot</button>
-                <button class="menu-btn" style="font-size: 13px; padding: 6px 12px;" onclick="addBot('hard')">+ 困难
-                    Bot</button>
-                <button class="menu-btn" style="font-size: 13px; padding: 6px 12px; background: rgba(255,0,0,0.3);"
-                    onclick="removeBot()">- 移除 Bot</button>
+            <!-- 右栏：战备选择 -->
+            <div class="lobby-column">
+                <div class="loadout-header">
+                    <h2 class="column-title" style="border: none; padding: 0;">⚔️ 战备物资</h2>
+                    <div class="coin-display">
+                        便携硬币: <span id="coin-count">0</span>
+                    </div>
+                </div>
+
+                <!-- 武器备选区 -->
+                <div id="weapon-selection" class="panel-section weapon-section scrollable-list">
+                    <h3>选择武器</h3>
+                    <button class="weapon-btn selected-weapon" data-weapon="bow">普通长弓 (初始)</button>
+                    <button class="weapon-btn" data-weapon="shortbow">速射短弓 (速射、低伤 - 80币)</button>
+                    <button class="weapon-btn" data-weapon="crossbow">穿透十字弩 (慢蓄、穿透 - 150币)</button>
+                    <button class="weapon-btn" data-weapon="dart">散射飞镖 (无蓄、扇形 - 200币)</button>
+                </div>
+
+                <!-- 局外天赋备选区 -->
+                <div id="talent-selection" class="panel-section talent-section scrollable-list">
+                    <h3>选择天赋</h3>
+                    <button class="talent-btn selected-talent" data-talent="none">无 (标准加成)</button>
+                    <button class="talent-btn" data-talent="paranoid">偏执 (重弩慢速，未命中不生怪)</button>
+                    <button class="talent-btn" data-talent="fantasy">幻想 (怪物的形态更加不可捉摸)</button>
+                    <button class="talent-btn" data-talent="insidious">阴险 (射偏的箭变成隐形地雷)</button>
+                    <button class="talent-btn" data-talent="clairvoyance">明察 (子弹极快，可按空格广域扫描)</button>
+                    <button class="talent-btn" data-talent="shield">护盾 (自动生成护盾 - 100币)</button>
+                    <button class="talent-btn" data-talent="poison">毒箭 (目标中毒掉血 - 100币)</button>
+                    <button class="talent-btn" data-talent="lightning">⚡雷矢 (命中概率发连锁闪电 - 150币)</button>
+                </div>
             </div>
         </div>
 
-        <div style="margin-top: 20px;">
-            <button class="menu-btn" onclick="joinGame('standard')">标准乱斗</button>
-            <button class="menu-btn" onclick="joinGame('dark_forest')">黑暗森林</button>
-            <button class="menu-btn" onclick="joinGame('sniper_duel')">狙击对决</button>
+        <!-- 底部按钮区 -->
+        <div class="lobby-footer">
+            <a href="editor.html" class="menu-btn secondary-btn">
+                📐 地图编辑器
+            </a>
+            <button class="menu-btn primary-btn" onclick="startGame()">
+                🚀 开始游戏
+            </button>
         </div>
 
-        <div style="margin-top: 15px;">
-            <a href="editor.html" class="menu-btn"
-                style="display: inline-block; text-decoration: none; font-size: 13px; padding: 6px 16px; background: rgba(0, 255, 255, 0.1); border: 1px solid rgba(0, 255, 255, 0.25);">📐
-                地图编辑器</a>
+        <!-- 房间浏览器模态框 -->
+        <div id="room-browser-modal" style="display: none;">
+            <div class="browser-content">
+                <div class="browser-header">
+                    <h2>🌍 活跃房间大厅</h2>
+                    <button class="menu-btn small-btn danger-btn" onclick="closeRoomBrowser()">关闭 ✖</button>
+                </div>
+                <div class="browser-controls">
+                    <button class="menu-btn small-btn" onclick="refreshRoomList()">🔄 刷新列表</button>
+                </div>
+                <div id="room-list-container" class="scrollable-list">
+                    <!-- 房间列表动态生成 -->
+                </div>
+            </div>
         </div>
     </div>
 

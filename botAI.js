@@ -331,7 +331,7 @@ class BotBrain {
             const charge = clamp(this.targetChargeDuration / 2.0, 0, 1);
 
             // 计算箭速
-            const arrowSpeed = 200 + charge * 400;
+            const arrowSpeed = 400 + charge * 800;
             const arrowLifeTime = 0.6 + charge * 1.9;
 
             // 通过回调创建箭矢

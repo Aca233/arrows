@@ -140,26 +140,68 @@ canvas {
     letter-spacing: 2px;
 }
 
-.talent-btn {
+/* ===========================
+   武器与天赋按钮统一样式
+   =========================== */
+.talent-btn,
+.weapon-btn {
     display: block;
     width: 100%;
-    margin: 12px 0;
-    padding: 14px 20px;
-    font-size: 16px;
+    margin: 8px 0;
+    padding: 10px 14px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
-    background: rgba(0, 255, 255, 0.05);
-    color: #eee;
-    border: 1px solid rgba(0, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.05);
+    color: #bbb;
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
-    transition: all 0.3s ease;
+    transition: all 0.25s ease;
+    text-align: left;
+    font-family: inherit;
 }
 
-.talent-btn:hover {
-    background: rgba(0, 255, 255, 0.2);
+.talent-btn:hover,
+.weapon-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
     color: #fff;
-    box-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
-    transform: translateY(-2px);
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateX(4px);
+}
+
+.talent-btn.selected-talent {
+    background: rgba(0, 255, 255, 0.15);
+    border-color: #0ff;
+    color: #fff;
+    box-shadow: 0 0 15px rgba(0, 255, 255, 0.2);
+    border-left: 4px solid #0ff;
+}
+
+.weapon-btn.selected-weapon {
+    background: rgba(255, 100, 100, 0.15);
+    border-color: #f66;
+    color: #fff;
+    box-shadow: 0 0 15px rgba(255, 100, 100, 0.2);
+    border-left: 4px solid #f66;
+}
+
+/* 滚动条定制 */
+.scrollable-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.scrollable-list::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 10px;
+}
+
+.scrollable-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+}
+
+.scrollable-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.4);
 }
 
 /* 游戏大厅 (Lobby) 界面 */
@@ -168,61 +210,398 @@ canvas {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background: rgba(5, 5, 10, 0.8);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    padding: 50px 80px;
-    border: 2px solid rgba(0, 255, 255, 0.15);
+    background: rgba(10, 12, 20, 0.85);
+    /* 更偏现代的深色调 */
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    padding: 40px 50px;
+    border: 1px solid rgba(0, 255, 255, 0.2);
     border-radius: 20px;
     text-align: center;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), inset 0 0 30px rgba(0, 255, 255, 0.05);
+    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.9), inset 0 0 40px rgba(0, 255, 255, 0.05);
     z-index: 200;
+    width: 800px;
+    /* 双栏需要更大的空间 */
+    max-width: 95vw;
+}
+
+#lobby-content {
+    display: flex;
+    gap: 30px;
+    margin-top: 25px;
+    align-items: flex-start;
+    text-align: left;
+}
+
+.lobby-column {
+    flex: 1;
+    min-width: 0;
+    /* 允许 flex item 内部收缩 */
+    display: flex;
+    flex-direction: column;
+}
+
+.column-title {
+    font-size: 18px;
+    color: #fff;
+    margin: 0 0 15px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 8px;
+    letter-spacing: 1px;
+}
+
+/* 输入框组 */
+.input-group {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+#player-name-input,
+#room-id-input {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: white;
+    font-size: 15px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    outline: none;
+    transition: all 0.3s ease;
+    font-family: inherit;
 }
 
 #player-name-input {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(0, 255, 255, 0.3);
-    color: white;
-    font-size: 18px;
-    padding: 12px 15px;
-    border-radius: 8px;
-    text-align: center;
-    width: 200px;
-    outline: none;
-    transition: all 0.3s ease;
-    font-family: 'Inter', sans-serif;
+    flex: 1;
+    text-align: left;
 }
 
-#player-name-input:focus {
+#room-id-input {
+    width: 120px;
+    text-align: center;
+}
+
+#player-name-input:focus,
+#room-id-input:focus {
     border-color: #0ff;
-    box-shadow: 0 0 15px rgba(0, 255, 255, 0.4);
-    background: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+    background: rgba(0, 255, 255, 0.05);
+}
+
+/* 内部区块通用样式 */
+.panel-section {
+    padding: 16px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+}
+
+.panel-section h3 {
+    margin: 0 0 12px 0;
+    font-size: 15px;
+}
+
+/* 房间准备区 */
+.room-section {
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    background: rgba(0, 255, 255, 0.03);
+    box-shadow: inset 0 0 20px rgba(0, 255, 255, 0.02);
+}
+
+.room-section h3 {
+    color: #0ff;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.status-board {
+    font-size: 13px;
+    color: #9cc;
+    line-height: 1.8;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 12px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    border: 1px solid rgba(0, 255, 255, 0.1);
+}
+
+.status-row {
+    display: flex;
+    justify-content: space-between;
+}
+
+.status-row strong {
+    color: #fff;
+}
+
+.section-label {
+    text-align: center;
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+/* Bot管理区 */
+.bot-section {
+    border: 1px solid rgba(255, 165, 0, 0.2);
+    background: rgba(255, 165, 0, 0.03);
+}
+
+.bot-section h3 {
+    color: #ffa500;
+}
+
+.bot-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+/* 战备物资侧 */
+.loadout-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 8px;
+    margin-bottom: 15px;
 }
 
 .coin-display {
-    font-size: 20px;
-    font-weight: 800;
-    letter-spacing: 1px;
-    margin: 15px 0;
+    font-size: 13px;
+    color: #aaa;
 }
 
-.menu-btn {
-    display: inline-block;
-    margin: 0 10px;
-    padding: 15px 30px;
+#coin-count {
+    color: gold;
+    text-shadow: 0 0 5px orange;
     font-size: 18px;
     font-weight: 800;
+    margin-left: 4px;
+}
+
+.weapon-section {
+    border: 1px solid rgba(255, 100, 100, 0.2);
+    background: rgba(255, 100, 100, 0.03);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.weapon-section h3 {
+    color: #faa;
+}
+
+.talent-section {
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    background: rgba(0, 255, 255, 0.03);
+    max-height: 250px;
+    overflow-y: auto;
+    margin-bottom: 0;
+}
+
+.talent-section h3 {
+    color: #aff;
+}
+
+/* 菜单按钮通用样式 */
+.menu-btn {
+    display: inline-block;
+    font-family: inherit;
     cursor: pointer;
-    background: linear-gradient(135deg, rgba(0, 255, 255, 0.2) 0%, rgba(0, 150, 255, 0.1) 100%);
+    background: rgba(255, 255, 255, 0.05);
     color: white;
-    border: 1px solid rgba(0, 255, 255, 0.5);
-    border-radius: 30px;
-    text-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
-    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    outline: none;
+}
+
+.btn-group {
+    display: flex;
+    gap: 8px;
+}
+
+.small-btn {
+    font-size: 12px;
+    padding: 8px;
+    font-weight: 600;
+}
+
+.mode-btn {
+    flex: 1;
+    font-size: 13px;
+    padding: 8px 0;
 }
 
 .menu-btn:hover {
-    background: linear-gradient(135deg, rgba(0, 255, 255, 0.4) 0%, rgba(0, 150, 255, 0.3) 100%);
-    box-shadow: 0 10px 20px rgba(0, 255, 255, 0.3), 0 0 0 4px rgba(0, 255, 255, 0.1);
-    transform: translateY(-5px) scale(1.05);
+    background: rgba(255, 255, 255, 0.15);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+
+.menu-btn:active {
+    transform: translateY(0);
+}
+
+.danger-btn {
+    background: rgba(255, 50, 50, 0.1);
+    border-color: rgba(255, 50, 50, 0.3);
+    color: #f88;
+}
+
+.danger-btn:hover {
+    background: rgba(255, 50, 50, 0.2);
+    color: #fff;
+    border-color: rgba(255, 50, 50, 0.5);
+}
+
+.lobby-footer {
+    margin-top: 30px;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 25px;
+}
+
+.primary-btn {
+    padding: 14px 45px;
+    font-size: 20px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    border-radius: 30px;
+    background: linear-gradient(135deg, rgba(0, 255, 255, 0.4) 0%, rgba(0, 150, 255, 0.5) 100%);
+    border: 1px solid rgba(0, 255, 255, 0.5);
+    text-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+    box-shadow: 0 0 20px rgba(0, 150, 255, 0.2);
+}
+
+.primary-btn:hover {
+    background: linear-gradient(135deg, rgba(0, 255, 255, 0.5) 0%, rgba(0, 150, 255, 0.6) 100%);
+    box-shadow: 0 10px 25px rgba(0, 150, 255, 0.4), 0 0 0 4px rgba(0, 255, 255, 0.1);
+    transform: translateY(-4px) scale(1.02);
+}
+
+.secondary-btn {
+    display: flex;
+    align-items: center;
+    padding: 12px 24px;
+    font-size: 15px;
+    text-decoration: none;
+    border-radius: 30px;
+    background: rgba(0, 255, 255, 0.05);
+    border-color: rgba(0, 255, 255, 0.2);
+}
+
+.secondary-btn:hover {
+    background: rgba(0, 255, 255, 0.1);
+    border-color: rgba(0, 255, 255, 0.4);
+}
+
+/* 房间浏览器模态框 */
+#room-browser-modal {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    /* 遮罩层加深 */
+    z-index: 300;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    border-radius: 20px;
+    /* 跟随lobby-panel的圆角 */
+}
+
+.browser-content {
+    width: 650px;
+    max-width: 90%;
+    max-height: 80%;
+    background: rgba(15, 20, 30, 0.95);
+    border: 1px solid rgba(0, 255, 255, 0.4);
+    border-radius: 16px;
+    padding: 25px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(0, 255, 255, 0.05);
+}
+
+.browser-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 15px;
+    margin-bottom: 15px;
+}
+
+.browser-header h2 {
+    margin: 0;
+    color: #0ff;
+    font-size: 22px;
+    letter-spacing: 1px;
+}
+
+.browser-controls {
+    margin-bottom: 15px;
+    text-align: right;
+}
+
+#room-list-container {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 10px;
+}
+
+.room-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 12px 18px;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    transition: all 0.2s ease;
+}
+
+.room-item:hover {
+    background: rgba(0, 255, 255, 0.08);
+    border-color: rgba(0, 255, 255, 0.3);
+}
+
+.room-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.room-info-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+}
+
+.room-info-details {
+    font-size: 13px;
+    color: #aaa;
+    display: flex;
+    gap: 15px;
+}
+
+.room-info-details span {
+    background: rgba(0, 0, 0, 0.4);
+    padding: 3px 8px;
+    border-radius: 4px;
+    color: #ccc;
 }
