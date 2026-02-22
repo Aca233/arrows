@@ -1179,7 +1179,9 @@ function startNewRound(room) {
     }
 }
 
-const PORT = 3000;
-server.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
+const PORT = parseInt(process.env.PORT, 10) || 3000;
+const HOST = '0.0.0.0';
+
+server.listen(PORT, HOST, () => {
+    console.log(`Server listening on ${HOST}:${PORT}`);
 });
