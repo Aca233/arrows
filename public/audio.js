@@ -82,6 +82,10 @@ const SoundFX = {
         // 短促的撞击噪音
         playNoise(0.1, 0.1, true);
     },
+    hitConfirm: () => {
+        // 命中确认：短促清晰，和开火音区分
+        playTone(950, 'triangle', 0.06, 0.045, 700);
+    },
     killMonster: () => {
         // 刺耳/数字碎裂感
         playNoise(0.2, 0.15);

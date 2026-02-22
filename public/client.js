@@ -57,7 +57,12 @@ let unlockedWeapons = JSON.parse(localStorage.getItem('arrows_weapons') || '["bo
 let selectedWeapon = 'bow';
 
 function getMaxChargeMs() {
-    return window.WEAPONS && window.WEAPONS[selectedWeapon] ? window.WEAPONS[selectedWeapon].maxChargeMs : 1000;
+    const weaponCfg = window.WEAPONS && window.WEAPONS[selectedWeapon];
+    if (weaponCfg && typeof weaponCfg.maxChargeMs === 'number') {
+        return weaponCfg.maxChargeMs;
+    }
+    // Fallback：配置未加载时保证基础可用
+    return selectedWeapon === 'dart' ? 0 : 1000;
 }
 
 function updateLobbyUI() {
@@ -268,12 +273,16 @@ socket.on('effect', (data) => {
     } else if (data.type === 'pickup') {
         spawnParticles(data.x, data.y, data.color || 'cyan', 20);
         if (window.SoundFX) SoundFX.pickupBuff();
+    } else if (data.type === 'player_hit') {
+        spawnParticles(data.x, data.y, data.color || '#ff6666', 26);
+        spawnParticles(data.x, data.y, 'white', 8);
+        if (window.SoundFX) SoundFX.hitConfirm();
+    } else if (data.type === 'monster_hit') {
+        spawnParticles(data.x, data.y, data.color || 'orange', 24);
+        if (window.SoundFX) SoundFX.hitConfirm();
     } else if (data.type === 'wall_hit') {
-        spawnParticles(data.x, data.y, data.color || 'cyan', 10);
+        spawnParticles(data.x, data.y, data.color || 'cyan', 14);
         if (window.SoundFX) SoundFX.hitWall();
-        // Boss 受击但未死：溅射少量粒子
-        spawnParticles(data.x, data.y, data.color || 'orange', 15);
-        if (window.SoundFX) SoundFX.hitWall(); // 复用撞墙音效
     }
 });
 
@@ -358,19 +367,8 @@ let chargeStartTime = 0;
 let isCharging = false;
 let chargeMouseX = 0;
 let chargeMouseY = 0;
-const MAX_CHARGE_MS = 2000; // 最大蓄力时间 2 秒
 const TILE_SIZE = 40; // 视觉上的散布角（平滑插值用）
 let visualSpread = 0; // 视觉上的散布角（平滑插值用）
-
-// 根据当前武器获取最大蓄力时间
-function getMaxChargeMs() {
-    switch (selectedWeapon) {
-        case 'shortbow': return 1500;
-        case 'crossbow': return 2500;
-        case 'dart': return 0; // 飞镖无需蓄力
-        default: return MAX_CHARGE_MS;
-    }
-}
 
 canvas.addEventListener('mousedown', (e) => {
     if (window.initAudio) window.initAudio(); // 用户必须交互一次才能在浏览器播音
@@ -412,6 +410,11 @@ canvas.addEventListener('mouseup', (e) => {
 
     // 判断当前是否在移动（WASD 有任意按键按下）
     const isMoving = keys.w || keys.a || keys.s || keys.d;
+
+    const me = gameState.players[myId];
+    if (me) {
+        playLocalShootFeedback(me.x, me.y, x, y, chargeRatio);
+    }
 
     if (window.SoundFX) SoundFX.shoot();
     socket.emit('shoot', { x, y, charge: chargeRatio, moving: isMoving });
@@ -544,6 +547,7 @@ function handleTouchEnd(e) {
                 if (me) {
                     const x = me.x + Math.cos(angle) * 1000;
                     const y = me.y + Math.sin(angle) * 1000;
+                    playLocalShootFeedback(me.x, me.y, x, y, chargeRatio);
                     if (window.SoundFX) SoundFX.shoot();
                     socket.emit('shoot', { x, y, charge: chargeRatio, moving: isMoving });
                 }
@@ -644,6 +648,30 @@ function spawnFloatingText(x, y, text, color) {
 // 引发全局屏幕震动
 function triggerShake(intensity) {
     screenShake = intensity;
+}
+
+// 本地开火即时反馈：降低“按下到命中回包”之间的空窗感
+function playLocalShootFeedback(fromX, fromY, toX, toY, chargeRatio) {
+    const angle = Math.atan2(toY - fromY, toX - fromX);
+    const burst = 6 + Math.floor(chargeRatio * 8);
+
+    for (let i = 0; i < burst; i++) {
+        const jitter = (Math.random() - 0.5) * 0.8;
+        const speed = 160 + Math.random() * 220;
+        const dist = 8 + Math.random() * 10;
+        particles.push({
+            x: fromX + Math.cos(angle) * dist,
+            y: fromY + Math.sin(angle) * dist,
+            vx: Math.cos(angle + jitter) * speed,
+            vy: Math.sin(angle + jitter) * speed,
+            life: 0.18 + Math.random() * 0.15,
+            color: 'rgba(255, 240, 180, 0.9)',
+            size: 1.5 + Math.random() * 1.8
+        });
+    }
+
+    // 轻微后坐力震屏
+    triggerShake(Math.max(screenShake, 0.05 + chargeRatio * 0.08));
 }
 
 let bgOffset = 0;
