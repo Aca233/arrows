@@ -2,7 +2,7 @@
   "name": "arrows",
   "version": "1.0.0",
   "description": "",
-  "main": "gameLogic.js",
+  "main": "server.js",
   "scripts": {
     "test": "echo 'No test specified'",
     "start": "node server.js"
@@ -11,6 +11,9 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "express": "^5.2.1",
     "socket.io": "^4.8.3"
