@@ -12,6 +12,9 @@
     <!-- 顶部工具栏 -->
     <header id="toolbar">
         <div class="toolbar-left">
+            <a href="index.html" class="action-btn"
+                style="text-decoration: none; margin-right: 15px; color: #ffeb3b; border-color: #ffeb3b; padding: 5px 10px; font-weight: bold;">⬅
+                返回大厅</a>
             <h1>📐 地图编辑器</h1>
             <span class="subtitle">箭有虚发 (Arrows Never Miss)</span>
         </div>
@@ -98,6 +101,14 @@
                     <label>高</label>
                     <input type="number" id="wall-h" min="10" step="1">
                 </div>
+                <div class="prop-row">
+                    <label>可破坏</label>
+                    <input type="checkbox" id="wall-destruct"><br>
+                </div>
+                <div class="prop-row">
+                    <label>血量</label>
+                    <input type="number" id="wall-hp" min="1" step="1" value="3">
+                </div>
                 <button class="action-btn danger small" id="btn-delete-wall">🗑️ 删除此墙体</button>
             </section>
 
@@ -131,6 +142,76 @@
                 <div class="entity-actions">
                     <button class="action-btn small" id="btn-upsert-portal">＋ 添加/更新</button>
                     <button class="action-btn danger small" id="btn-delete-portal">🗑 删除</button>
+                </div>
+            </section>
+
+            <!-- 草丛属性 -->
+            <section class="panel-section" id="bush-props">
+                <h3>🌿 草丛</h3>
+                <div class="quick-row">
+                    <button class="action-btn small" id="btn-quick-add-bush">📍 点击画布快速放置</button>
+                </div>
+                <div id="bush-list" class="entity-list"></div>
+                <div class="prop-row">
+                    <label>ID</label>
+                    <input type="text" id="bush-id" maxlength="24" placeholder="如 b1">
+                </div>
+                <div class="prop-row">
+                    <label>X</label>
+                    <input type="number" id="bush-x" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>Y</label>
+                    <input type="number" id="bush-y" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>半径</label>
+                    <input type="number" id="bush-radius" min="20" step="1" value="60">
+                </div>
+                <div class="entity-actions">
+                    <button class="action-btn small" id="btn-upsert-bush">＋ 添加/更新</button>
+                    <button class="action-btn danger small" id="btn-delete-bush">🗑 删除</button>
+                </div>
+            </section>
+
+            <!-- 跳板属性 -->
+            <section class="panel-section" id="jump-pad-props">
+                <h3>⏩ 跳板</h3>
+                <div class="quick-row">
+                    <button class="action-btn small" id="btn-quick-add-jump-pad">📍 点击画布快速放置</button>
+                </div>
+                <div id="jump-pad-list" class="entity-list"></div>
+                <div class="prop-row">
+                    <label>ID</label>
+                    <input type="text" id="jump-pad-id" maxlength="24" placeholder="如 jp1">
+                </div>
+                <div class="prop-row">
+                    <label>X</label>
+                    <input type="number" id="jump-pad-x" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>Y</label>
+                    <input type="number" id="jump-pad-y" step="1">
+                </div>
+                <div class="prop-row">
+                    <label>半径</label>
+                    <input type="number" id="jump-pad-radius" min="10" step="1" value="40">
+                </div>
+                <div class="prop-row">
+                    <label>弹射量级</label>
+                    <input type="number" id="jump-pad-power" min="100" step="10" value="1000">
+                </div>
+                <div class="prop-row">
+                    <label>方向X</label>
+                    <input type="number" id="jump-pad-dirx" min="-1" max="1" step="0.1" value="1">
+                </div>
+                <div class="prop-row">
+                    <label>方向Y</label>
+                    <input type="number" id="jump-pad-diry" min="-1" max="1" step="0.1" value="0">
+                </div>
+                <div class="entity-actions">
+                    <button class="action-btn small" id="btn-upsert-jump-pad">＋ 添加/更新</button>
+                    <button class="action-btn danger small" id="btn-delete-jump-pad">🗑 删除</button>
                 </div>
             </section>
 
@@ -181,6 +262,14 @@
                 <div class="stat-row">
                     <span>毒区数量</span>
                     <span id="stat-poison-zones">0</span>
+                </div>
+                <div class="stat-row">
+                    <span>草丛数量</span>
+                    <span id="stat-bushes">0</span>
+                </div>
+                <div class="stat-row">
+                    <span>跳板数量</span>
+                    <span id="stat-jump-pads">0</span>
                 </div>
                 <div class="stat-row">
                     <span>缩放</span>

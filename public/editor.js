@@ -32,6 +32,8 @@
     const wallYInput = document.getElementById('wall-y');
     const wallWInput = document.getElementById('wall-w');
     const wallHInput = document.getElementById('wall-h');
+    const wallDestructInput = document.getElementById('wall-destruct');
+    const wallHpInput = document.getElementById('wall-hp');
     const btnDeleteWall = document.getElementById('btn-delete-wall');
 
     // 传送门属性
@@ -56,6 +58,29 @@
     const btnDeletePoison = document.getElementById('btn-delete-poison');
     const btnQuickAddPoison = document.getElementById('btn-quick-add-poison');
 
+    // 草丛属性
+    const bushListEl = document.getElementById('bush-list');
+    const bushIdInput = document.getElementById('bush-id');
+    const bushXInput = document.getElementById('bush-x');
+    const bushYInput = document.getElementById('bush-y');
+    const bushRadiusInput = document.getElementById('bush-radius');
+    const btnUpsertBush = document.getElementById('btn-upsert-bush');
+    const btnDeleteBush = document.getElementById('btn-delete-bush');
+    const btnQuickAddBush = document.getElementById('btn-quick-add-bush');
+
+    // 跳板属性
+    const jumpPadListEl = document.getElementById('jump-pad-list');
+    const jumpPadIdInput = document.getElementById('jump-pad-id');
+    const jumpPadXInput = document.getElementById('jump-pad-x');
+    const jumpPadYInput = document.getElementById('jump-pad-y');
+    const jumpPadRadiusInput = document.getElementById('jump-pad-radius');
+    const jumpPadPowerInput = document.getElementById('jump-pad-power');
+    const jumpPadDirXInput = document.getElementById('jump-pad-dirx');
+    const jumpPadDirYInput = document.getElementById('jump-pad-diry');
+    const btnUpsertJumpPad = document.getElementById('btn-upsert-jump-pad');
+    const btnDeleteJumpPad = document.getElementById('btn-delete-jump-pad');
+    const btnQuickAddJumpPad = document.getElementById('btn-quick-add-jump-pad');
+
     // 状态栏
     const statusCoords = document.getElementById('status-coords');
     const statusTool = document.getElementById('status-tool');
@@ -63,6 +88,8 @@
     const statWalls = document.getElementById('stat-walls');
     const statPortals = document.getElementById('stat-portals');
     const statPoisonZones = document.getElementById('stat-poison-zones');
+    const statBushes = document.getElementById('stat-bushes');
+    const statJumpPads = document.getElementById('stat-jump-pads');
     const statZoom = document.getElementById('stat-zoom');
 
     // === 编辑器状态 ===
@@ -75,6 +102,8 @@
         walls: [],
         portals: [],
         poisonZones: [],
+        bushes: [],
+        jumpPads: [],
         spawnZones: [],
 
         // 交互状态
@@ -82,6 +111,8 @@
         selectedWallIdx: -1,    // 当前选中的墙体索引
         selectedPortalId: '',
         selectedPoisonId: '',
+        selectedBushId: '',
+        selectedJumpPadId: '',
         gridSize: 20,           // 网格吸附尺寸
         snapEnabled: true,
         quickPlaceMode: '',     // '' | 'portal' | 'poison'
@@ -147,6 +178,13 @@
         btnDeletePortal.addEventListener('click', deleteSelectedPortal);
         btnUpsertPoison.addEventListener('click', upsertPoisonZone);
         btnDeletePoison.addEventListener('click', deleteSelectedPoisonZone);
+
+        btnUpsertBush.addEventListener('click', upsertBush);
+        btnDeleteBush.addEventListener('click', deleteSelectedBush);
+
+        btnUpsertJumpPad.addEventListener('click', upsertJumpPad);
+        btnDeleteJumpPad.addEventListener('click', deleteSelectedJumpPad);
+
         btnQuickAddPortal.addEventListener('click', () => {
             const enabling = editor.quickPlaceMode !== 'portal';
             editor.quickPlaceMode = enabling ? 'portal' : '';
@@ -167,9 +205,23 @@
             syncQuickPlaceButtons();
             showStatus(enabling ? '快速放置毒区：点击画布即可放置' : '已关闭快速放置');
         });
+        btnQuickAddBush.addEventListener('click', () => {
+            const enabling = editor.quickPlaceMode !== 'bush';
+            editor.quickPlaceMode = enabling ? 'bush' : '';
+            editor.pendingPortalId = '';
+            syncQuickPlaceButtons();
+            showStatus(enabling ? '快速放置草丛：点击画布即可放置' : '已关闭快速放置');
+        });
+        btnQuickAddJumpPad.addEventListener('click', () => {
+            const enabling = editor.quickPlaceMode !== 'jumpPad';
+            editor.quickPlaceMode = enabling ? 'jumpPad' : '';
+            editor.pendingPortalId = '';
+            syncQuickPlaceButtons();
+            showStatus(enabling ? '快速放置跳板：点击画布即可放置' : '已关闭快速放置');
+        });
 
         // 墙体属性输入
-        [wallXInput, wallYInput, wallWInput, wallHInput].forEach(input => {
+        [wallXInput, wallYInput, wallWInput, wallHInput, wallDestructInput, wallHpInput].forEach(input => {
             input.addEventListener('change', applyWallProps);
         });
 
@@ -202,6 +254,8 @@
         centerView();
         updatePortalPanel();
         updatePoisonPanel();
+        updateBushPanel();
+        updateJumpPadPanel();
         updateStats();
         updateStatusTool();
         syncQuickPlaceButtons();
@@ -288,6 +342,16 @@
 
         if (editor.quickPlaceMode === 'poison') {
             quickPlacePoisonZone(wx, wy);
+            return;
+        }
+
+        if (editor.quickPlaceMode === 'bush') {
+            quickPlaceBush(wx, wy);
+            return;
+        }
+
+        if (editor.quickPlaceMode === 'jumpPad') {
+            quickPlaceJumpPad(wx, wy);
             return;
         }
 
@@ -471,7 +535,9 @@
                 editor.wallIdCounter++;
                 editor.walls.push({
                     id: `w${editor.wallIdCounter}`,
-                    x: x, y: y, w: w, h: h
+                    x: x, y: y, w: w, h: h,
+                    isDestructible: false,
+                    hp: 3
                 });
                 updateStats();
                 showStatus(`墙体已放置: ${w}×${h}`);
@@ -532,15 +598,23 @@
                 deleteSelectedPortal();
             } else if (editor.selectedPoisonId) {
                 deleteSelectedPoisonZone();
+            } else if (editor.selectedBushId) {
+                deleteSelectedBush();
+            } else if (editor.selectedJumpPadId) {
+                deleteSelectedJumpPad();
             }
         } else if (e.key === 'Escape') {
             editor.selectedWallIdx = -1;
             editor.selectedPortalId = '';
             editor.selectedPoisonId = '';
+            editor.selectedBushId = '';
+            editor.selectedJumpPadId = '';
             editor.pendingPortalId = '';
             updateWallProps();
             updatePortalPanel();
             updatePoisonPanel();
+            updateBushPanel();
+            updateJumpPadPanel();
             syncQuickPlaceButtons();
             render();
         }
@@ -624,13 +698,70 @@
         editor.poisonZones.push(zone);
         editor.selectedPoisonId = id;
         editor.selectedPortalId = '';
+        editor.selectedBushId = '';
+        editor.selectedJumpPadId = '';
         editor.selectedWallIdx = -1;
         updateWallProps();
         updatePoisonPanel();
         updatePortalPanel();
+        updateBushPanel();
+        updateJumpPadPanel();
         updateStats();
         render();
         showStatus(`快速放置毒区: ${id}`);
+    }
+
+    function quickPlaceBush(wx, wy) {
+        pushHistory();
+        const id = normalizeEntityId('', 'b', editor.bushes);
+        const bush = {
+            id,
+            x: snapToGrid(wx),
+            y: snapToGrid(wy),
+            radius: Math.max(20, parseInt(bushRadiusInput.value) || 60)
+        };
+        editor.bushes.push(bush);
+        editor.selectedBushId = id;
+        editor.selectedPoisonId = '';
+        editor.selectedPortalId = '';
+        editor.selectedJumpPadId = '';
+        editor.selectedWallIdx = -1;
+        updateWallProps();
+        updatePoisonPanel();
+        updatePortalPanel();
+        updateBushPanel();
+        updateJumpPadPanel();
+        updateStats();
+        render();
+        showStatus(`快速放置草丛: ${id}`);
+    }
+
+    function quickPlaceJumpPad(wx, wy) {
+        pushHistory();
+        const id = normalizeEntityId('', 'jp', editor.jumpPads);
+        const jumpPad = {
+            id,
+            x: snapToGrid(wx),
+            y: snapToGrid(wy),
+            radius: Math.max(10, parseInt(jumpPadRadiusInput.value) || 40),
+            power: Math.max(100, parseInt(jumpPadPowerInput.value) || 1000),
+            dirX: parseFloat(jumpPadDirXInput.value) || 1,
+            dirY: parseFloat(jumpPadDirYInput.value) || 0
+        };
+        editor.jumpPads.push(jumpPad);
+        editor.selectedJumpPadId = id;
+        editor.selectedBushId = '';
+        editor.selectedPoisonId = '';
+        editor.selectedPortalId = '';
+        editor.selectedWallIdx = -1;
+        updateWallProps();
+        updatePoisonPanel();
+        updatePortalPanel();
+        updateBushPanel();
+        updateJumpPadPanel();
+        updateStats();
+        render();
+        showStatus(`快速放置跳板: ${id}`);
     }
 
     function normalizeEntityId(raw, fallbackPrefix, arr) {
@@ -704,22 +835,108 @@
         }
     }
 
+    function updateBushPanel() {
+        renderEntityList(
+            bushListEl,
+            editor.bushes,
+            editor.selectedBushId,
+            b => `(${Math.round(b.x)}, ${Math.round(b.y)}) r=${Math.round(b.radius || 60)}`,
+            selectBush
+        );
+
+        const b = editor.bushes.find(item => item.id === editor.selectedBushId);
+        if (b) {
+            bushIdInput.value = b.id || '';
+            bushXInput.value = Math.round(b.x || 0);
+            bushYInput.value = Math.round(b.y || 0);
+            bushRadiusInput.value = Math.max(20, Math.round(b.radius || 60));
+        } else {
+            bushIdInput.value = '';
+            bushXInput.value = '';
+            bushYInput.value = '';
+            bushRadiusInput.value = 60;
+        }
+    }
+
+    function updateJumpPadPanel() {
+        renderEntityList(
+            jumpPadListEl,
+            editor.jumpPads,
+            editor.selectedJumpPadId,
+            jp => `(${Math.round(jp.x)}, ${Math.round(jp.y)}) r=${Math.round(jp.radius || 40)}`,
+            selectJumpPad
+        );
+
+        const jp = editor.jumpPads.find(item => item.id === editor.selectedJumpPadId);
+        if (jp) {
+            jumpPadIdInput.value = jp.id || '';
+            jumpPadXInput.value = Math.round(jp.x || 0);
+            jumpPadYInput.value = Math.round(jp.y || 0);
+            jumpPadRadiusInput.value = Math.max(10, Math.round(jp.radius || 40));
+            jumpPadPowerInput.value = Math.max(100, Math.round(jp.power || 1000));
+            jumpPadDirXInput.value = jp.dirX !== undefined ? jp.dirX : 1;
+            jumpPadDirYInput.value = jp.dirY !== undefined ? jp.dirY : 0;
+        } else {
+            jumpPadIdInput.value = '';
+            jumpPadXInput.value = '';
+            jumpPadYInput.value = '';
+            jumpPadRadiusInput.value = 40;
+            jumpPadPowerInput.value = 1000;
+            jumpPadDirXInput.value = 1;
+            jumpPadDirYInput.value = 0;
+        }
+    }
+
     function selectPortal(id) {
         editor.selectedPortalId = id;
         editor.selectedPoisonId = '';
+        editor.selectedBushId = '';
+        editor.selectedJumpPadId = '';
         editor.selectedWallIdx = -1;
         updateWallProps();
         updatePortalPanel();
         updatePoisonPanel();
+        updateBushPanel();
+        updateJumpPadPanel();
     }
 
     function selectPoisonZone(id) {
         editor.selectedPoisonId = id;
         editor.selectedPortalId = '';
+        editor.selectedBushId = '';
+        editor.selectedJumpPadId = '';
         editor.selectedWallIdx = -1;
         updateWallProps();
         updatePortalPanel();
         updatePoisonPanel();
+        updateBushPanel();
+        updateJumpPadPanel();
+    }
+
+    function selectBush(id) {
+        editor.selectedBushId = id;
+        editor.selectedPortalId = '';
+        editor.selectedPoisonId = '';
+        editor.selectedJumpPadId = '';
+        editor.selectedWallIdx = -1;
+        updateWallProps();
+        updatePortalPanel();
+        updatePoisonPanel();
+        updateBushPanel();
+        updateJumpPadPanel();
+    }
+
+    function selectJumpPad(id) {
+        editor.selectedJumpPadId = id;
+        editor.selectedPortalId = '';
+        editor.selectedPoisonId = '';
+        editor.selectedBushId = '';
+        editor.selectedWallIdx = -1;
+        updateWallProps();
+        updatePortalPanel();
+        updatePoisonPanel();
+        updateBushPanel();
+        updateJumpPadPanel();
     }
 
     function upsertPortal() {
@@ -805,6 +1022,78 @@
         showStatus('毒区已删除');
     }
 
+    function upsertBush() {
+        const x = parseInt(bushXInput.value);
+        const y = parseInt(bushYInput.value);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            showStatus('草丛坐标无效');
+            return;
+        }
+
+        const id = normalizeEntityId(bushIdInput.value, 'b', editor.bushes);
+        const radius = Math.max(20, parseInt(bushRadiusInput.value) || 60);
+
+        pushHistory();
+        const idx = editor.bushes.findIndex(b => b.id === id);
+        const item = { id, x: snapToGrid(x), y: snapToGrid(y), radius };
+        if (idx >= 0) editor.bushes[idx] = item;
+        else editor.bushes.push(item);
+
+        editor.selectedBushId = id;
+        updateBushPanel();
+        updateStats();
+        render();
+        showStatus(`草丛已保存: ${id}`);
+    }
+
+    function deleteSelectedBush() {
+        if (!editor.selectedBushId) return;
+        pushHistory();
+        editor.bushes = editor.bushes.filter(b => b.id !== editor.selectedBushId);
+        editor.selectedBushId = '';
+        updateBushPanel();
+        updateStats();
+        render();
+        showStatus('草丛已删除');
+    }
+
+    function upsertJumpPad() {
+        const x = parseInt(jumpPadXInput.value);
+        const y = parseInt(jumpPadYInput.value);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            showStatus('跳板坐标无效');
+            return;
+        }
+
+        const id = normalizeEntityId(jumpPadIdInput.value, 'jp', editor.jumpPads);
+        const radius = Math.max(10, parseInt(jumpPadRadiusInput.value) || 40);
+        const power = Math.max(100, parseInt(jumpPadPowerInput.value) || 1000);
+        const dirX = parseFloat(jumpPadDirXInput.value) || 1;
+        const dirY = parseFloat(jumpPadDirYInput.value) || 0;
+
+        pushHistory();
+        const idx = editor.jumpPads.findIndex(jp => jp.id === id);
+        const item = { id, x: snapToGrid(x), y: snapToGrid(y), radius, power, dirX, dirY };
+        if (idx >= 0) editor.jumpPads[idx] = item;
+        else editor.jumpPads.push(item);
+
+        editor.selectedJumpPadId = id;
+        updateJumpPadPanel();
+        updateStats();
+        render();
+        showStatus(`跳板已保存: ${id}`);
+    }
+
+    function deleteSelectedJumpPad() {
+        if (!editor.selectedJumpPadId) return;
+        pushHistory();
+        editor.jumpPads = editor.jumpPads.filter(jp => jp.id !== editor.selectedJumpPadId);
+        editor.selectedJumpPadId = '';
+        updateJumpPadPanel();
+        updateStats();
+        render();
+        showStatus('跳板已删除');
+    }
     // === 碰撞检测 ===
     function hitTestWall(wx, wy) {
         // 从后往前检测（后绘制的在上层）
@@ -843,7 +1132,9 @@
         editor.history.push({
             walls: JSON.parse(JSON.stringify(editor.walls)),
             portals: JSON.parse(JSON.stringify(editor.portals)),
-            poisonZones: JSON.parse(JSON.stringify(editor.poisonZones))
+            poisonZones: JSON.parse(JSON.stringify(editor.poisonZones)),
+            bushes: JSON.parse(JSON.stringify(editor.bushes)),
+            jumpPads: JSON.parse(JSON.stringify(editor.jumpPads))
         });
         if (editor.history.length > editor.maxHistory) {
             editor.history.shift();
@@ -864,15 +1155,21 @@
             editor.walls = JSON.parse(JSON.stringify(state.walls || []));
             editor.portals = JSON.parse(JSON.stringify(state.portals || []));
             editor.poisonZones = JSON.parse(JSON.stringify(state.poisonZones || []));
+            editor.bushes = JSON.parse(JSON.stringify(state.bushes || []));
+            editor.jumpPads = JSON.parse(JSON.stringify(state.jumpPads || []));
         }
 
         editor.selectedWallIdx = -1;
         editor.selectedPortalId = '';
         editor.selectedPoisonId = '';
+        editor.selectedBushId = '';
+        editor.selectedJumpPadId = '';
         editor.pendingPortalId = '';
         updateWallProps();
         updatePortalPanel();
         updatePoisonPanel();
+        updateBushPanel();
+        updateJumpPadPanel();
         updateStats();
         render();
     }
@@ -973,6 +1270,56 @@
             ctx.font = `${11 / editor.zoom}px Inter`;
             ctx.textAlign = 'center';
             ctx.fillText(`${z.id} dps:${z.dps || 1}`, z.x, z.y + 4 / editor.zoom);
+        });
+
+        // 绘制跳板
+        editor.jumpPads.forEach((jp) => {
+            const isSelected = jp.id === editor.selectedJumpPadId;
+            const radius = Math.max(10, jp.radius || 40);
+
+            ctx.beginPath();
+            ctx.arc(jp.x, jp.y, radius, 0, Math.PI * 2);
+            ctx.fillStyle = isSelected ? 'rgba(255, 165, 0, 0.4)' : 'rgba(255, 165, 0, 0.2)';
+            ctx.fill();
+
+            ctx.strokeStyle = isSelected ? '#fff' : 'rgba(255, 165, 0, 0.8)';
+            ctx.lineWidth = (isSelected ? 3 : 2) / editor.zoom;
+            ctx.stroke();
+
+            const arrowLen = radius * 0.6;
+            const headAngle = Math.atan2(jp.dirY, jp.dirX);
+            ctx.beginPath();
+            ctx.moveTo(jp.x, jp.y);
+            ctx.lineTo(jp.x + jp.dirX * arrowLen, jp.y + jp.dirY * arrowLen);
+            ctx.lineTo(jp.x + jp.dirX * arrowLen - Math.cos(headAngle - 0.5) * 10 / editor.zoom, jp.y + jp.dirY * arrowLen - Math.sin(headAngle - 0.5) * 10 / editor.zoom);
+            ctx.moveTo(jp.x + jp.dirX * arrowLen, jp.y + jp.dirY * arrowLen);
+            ctx.lineTo(jp.x + jp.dirX * arrowLen - Math.cos(headAngle + 0.5) * 10 / editor.zoom, jp.y + jp.dirY * arrowLen - Math.sin(headAngle + 0.5) * 10 / editor.zoom);
+            ctx.stroke();
+
+            ctx.fillStyle = '#fff';
+            ctx.font = `${10 / editor.zoom}px Inter`;
+            ctx.textAlign = 'center';
+            ctx.fillText(jp.id, jp.x, jp.y - radius - 6 / editor.zoom);
+        });
+
+        // 绘制草丛
+        editor.bushes.forEach((b) => {
+            const isSelected = b.id === editor.selectedBushId;
+            const radius = Math.max(20, b.radius || 60);
+
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, radius, 0, Math.PI * 2);
+            ctx.fillStyle = isSelected ? 'rgba(34, 139, 34, 0.6)' : 'rgba(34, 139, 34, 0.4)';
+            ctx.fill();
+
+            ctx.strokeStyle = isSelected ? '#fff' : 'rgba(34, 139, 34, 0.8)';
+            ctx.lineWidth = (isSelected ? 3 : 2) / editor.zoom;
+            ctx.stroke();
+
+            ctx.fillStyle = '#fff';
+            ctx.font = `${10 / editor.zoom}px Inter`;
+            ctx.textAlign = 'center';
+            ctx.fillText(b.id, b.x, b.y - radius - 6 / editor.zoom);
         });
 
         // 绘制传送门（在墙体下方）
@@ -1110,6 +1457,8 @@
             wallYInput.value = Math.round(w.y);
             wallWInput.value = Math.round(w.w);
             wallHInput.value = Math.round(w.h);
+            wallDestructInput.checked = !!w.isDestructible;
+            wallHpInput.value = w.hp || 3;
         } else {
             wallPropsPanel.style.display = 'none';
         }
@@ -1123,6 +1472,9 @@
         w.y = parseInt(wallYInput.value) || 0;
         w.w = Math.max(10, parseInt(wallWInput.value) || 10);
         w.h = Math.max(10, parseInt(wallHInput.value) || 10);
+        w.isDestructible = wallDestructInput.checked;
+        w.hp = Math.max(1, parseInt(wallHpInput.value) || 3);
+        w.maxHp = w.hp;
         render();
     }
 
@@ -1142,6 +1494,8 @@
         statWalls.textContent = editor.walls.length;
         statPortals.textContent = editor.portals.length;
         statPoisonZones.textContent = editor.poisonZones.length;
+        statBushes.textContent = editor.bushes.length;
+        statJumpPads.textContent = editor.jumpPads.length;
     }
 
     function updateZoomStat() {
@@ -1220,10 +1574,27 @@
             radius: Math.max(20, Math.round(z.radius || 100)),
             dps: Math.max(1, Math.round(z.dps || 1))
         }));
+        editor.bushes = (data.bushes || []).map(b => ({
+            id: b.id,
+            x: Math.round(b.x || 0),
+            y: Math.round(b.y || 0),
+            radius: Math.max(20, Math.round(b.radius || 60))
+        }));
+        editor.jumpPads = (data.jumpPads || []).map(jp => ({
+            id: jp.id,
+            x: Math.round(jp.x || 0),
+            y: Math.round(jp.y || 0),
+            radius: Math.max(10, Math.round(jp.radius || 40)),
+            power: Math.max(10, Math.round(jp.power || 1000)),
+            dirX: jp.dirX !== undefined ? jp.dirX : 1,
+            dirY: jp.dirY !== undefined ? jp.dirY : 0
+        }));
         editor.spawnZones = data.spawnZones || [];
         editor.selectedWallIdx = -1;
         editor.selectedPortalId = '';
         editor.selectedPoisonId = '';
+        editor.selectedBushId = '';
+        editor.selectedJumpPadId = '';
         editor.pendingPortalId = '';
 
         // 更新 UI
@@ -1243,13 +1614,17 @@
         editor.history = [{
             walls: JSON.parse(JSON.stringify(editor.walls)),
             portals: JSON.parse(JSON.stringify(editor.portals)),
-            poisonZones: JSON.parse(JSON.stringify(editor.poisonZones))
+            poisonZones: JSON.parse(JSON.stringify(editor.poisonZones)),
+            bushes: JSON.parse(JSON.stringify(editor.bushes)),
+            jumpPads: JSON.parse(JSON.stringify(editor.jumpPads))
         }];
         editor.historyIndex = 0;
 
         updateWallProps();
         updatePortalPanel();
         updatePoisonPanel();
+        updateBushPanel();
+        updateJumpPadPanel();
         updateStats();
         syncQuickPlaceButtons();
         centerView();
@@ -1272,6 +1647,8 @@
             walls: editor.walls,
             portals: editor.portals,
             poisonZones: editor.poisonZones,
+            bushes: editor.bushes,
+            jumpPads: editor.jumpPads,
             spawnZones: editor.spawnZones
         };
 
@@ -1302,6 +1679,8 @@
             walls: editor.walls,
             portals: editor.portals,
             poisonZones: editor.poisonZones,
+            bushes: editor.bushes,
+            jumpPads: editor.jumpPads,
             spawnZones: editor.spawnZones
         };
 
@@ -1354,6 +1733,8 @@
             walls: [],
             portals: [],
             poisonZones: [],
+            bushes: [],
+            jumpPads: [],
             spawnZones: []
         });
         newMapIdInput.value = '';

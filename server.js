@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const { Player, Arrow, Monster, Wall, Portal, PoisonZone, TargetBee, BuffDrop, Trap, checkCollision, checkCircleRectCollision, resolveCircleRectCollision, WEAPONS } = require('./gameLogic');
+const { Player, Arrow, Monster, Wall, Portal, PoisonZone, Bush, JumpPad, TargetBee, BuffDrop, SupplyBox, Trap, checkCollision, checkCircleRectCollision, resolveCircleRectCollision, WEAPONS } = require('./gameLogic');
 const { BotBrain, getNextBotName } = require('./botAI');
 const { loadMap, getMap, saveMap, listMaps } = require('./mapLoader');
 const path = require('path');
@@ -53,10 +53,11 @@ function applyModeStats(player, mode) {
     }
 }
 
-function createRoom(roomId, mode = 'standard') {
+function createRoom(roomId, mode = 'standard', mapId = 'standard') {
     return {
         id: roomId,
         mode: mode,
+        mapId: mapId,
         players: {},
         arrows: {},
         monsters: {},
@@ -65,6 +66,8 @@ function createRoom(roomId, mode = 'standard') {
         poisonZones: [],
         bees: {},
         buffs: {},
+        supplyBoxes: {},
+        supplyDropTimer: 45, // First drop in 45s
         traps: {},
         round: 0,
         state: 'waiting', // waiting, playing, round_end
@@ -171,44 +174,45 @@ app.post('/api/maps/:id', (req, res) => {
     }
 });
 
-function getOrCreateRoom(modeStr, requestRoomId = '') {
+function getOrCreateRoom(modeStr, requestRoomId = '', mapIdStr = 'standard') {
     const normalizedMode = normalizeMode(modeStr);
+    const normalizedMapId = mapIdStr || 'standard';
     const normalizedRoomId = (requestRoomId || '').trim();
 
     if (normalizedRoomId) {
         if (rooms[normalizedRoomId]) {
             return rooms[normalizedRoomId];
         } else {
-            const newRoom = createRoom(normalizedRoomId, normalizedMode);
-            const mapData = loadMap(normalizedMode);
+            const newRoom = createRoom(normalizedRoomId, normalizedMode, normalizedMapId);
+            const mapData = loadMap(normalizedMapId);
             if (mapData) {
                 newRoom.walls = mapData.walls || [];
                 newRoom.portals = mapData.portals || [];
                 newRoom.poisonZones = mapData.poisonZones || [];
             }
             rooms[normalizedRoomId] = newRoom;
-            console.log(`[Server] Created customized room: ${normalizedRoomId} mode: ${normalizedMode}`);
+            console.log(`[Server] Created customized room: ${normalizedRoomId} mode: ${normalizedMode} map: ${normalizedMapId}`);
             return newRoom;
         }
     }
 
     for (const [id, r] of Object.entries(rooms)) {
-        if (r.mode === normalizedMode && Object.keys(r.players).length < 20) {
+        if (r.mode === normalizedMode && r.mapId === normalizedMapId && Object.keys(r.players).length < 20) {
             return r;
         }
     }
 
     const newRoomId = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const newRoom = createRoom(newRoomId, normalizedMode);
+    const newRoom = createRoom(newRoomId, normalizedMode, normalizedMapId);
 
-    const mapData = loadMap(normalizedMode);
+    const mapData = loadMap(normalizedMapId);
     if (mapData) {
         newRoom.walls = mapData.walls || [];
         newRoom.portals = mapData.portals || [];
         newRoom.poisonZones = mapData.poisonZones || [];
     }
     rooms[newRoomId] = newRoom;
-    console.log(`[Server] Created new anonymous room: ${newRoomId} mode: ${normalizedMode}`);
+    console.log(`[Server] Created new anonymous room: ${newRoomId} mode: ${normalizedMode} map: ${normalizedMapId}`);
     return newRoom;
 }
 
@@ -218,8 +222,9 @@ io.on('connection', (socket) => {
     socket.emit('init', socket.id);
 
     socket.on('join', (data = {}) => {
-        const { roomId, name, mode, talent, weapon } = data;
+        const { roomId, name, mode, mapId, talent, weapon } = data;
         const normalizedMode = normalizeMode(mode);
+        const mapIdStr = mapId || 'standard';
         const requestedRoomId = (roomId || '').trim();
         const previousRoomId = playerRooms[socket.id];
 
@@ -234,7 +239,7 @@ io.on('connection', (socket) => {
             }
         }
 
-        const room = getOrCreateRoom(normalizedMode, requestedRoomId);
+        const room = getOrCreateRoom(normalizedMode, requestedRoomId, mapIdStr);
         const effectiveMode = normalizeMode(room.mode);
 
         room.players[socket.id] = new Player(
@@ -259,12 +264,13 @@ io.on('connection', (socket) => {
         socket.emit('room_joined', {
             roomId: room.id,
             mode: effectiveMode,
+            mapId: room.mapId,
             state: room.state,
             players: humanCount,
             total: totalCount
         });
 
-        console.log(`[Room ${room.id}] Player joined: ${player.name} | Talent: ${player.talent} | Mode: ${effectiveMode}`);
+        console.log(`[Room ${room.id}] Player joined: ${player.name} | Talent: ${player.talent} | Mode: ${effectiveMode} | Map: ${room.mapId}`);
     });
 
     socket.on('set_room_mode', (data = {}) => {
@@ -276,11 +282,6 @@ io.on('connection', (socket) => {
         const nextMode = normalizeMode(data.mode);
         room.mode = nextMode;
 
-        const mapData = loadMap(nextMode);
-        room.walls = mapData ? (mapData.walls || []) : [];
-        room.portals = mapData ? (mapData.portals || []) : [];
-        room.poisonZones = mapData ? (mapData.poisonZones || []) : [];
-
         for (const p of Object.values(room.players)) {
             applyModeStats(p, nextMode);
         }
@@ -288,11 +289,37 @@ io.on('connection', (socket) => {
         io.to(room.id).emit('room_joined', {
             roomId: room.id,
             mode: room.mode,
+            mapId: room.mapId,
             state: room.state,
             players: Object.keys(room.players).filter(id => !id.startsWith('bot_')).length,
             total: Object.keys(room.players).length
         });
         io.to(room.id).emit('chat', `房间模式已切换为 [${nextMode}]`);
+    });
+
+    socket.on('set_room_map', (data = {}) => {
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+        if (room.state !== 'waiting') return;
+
+        const nextMapId = data.mapId || 'standard';
+        room.mapId = nextMapId;
+
+        const mapData = loadMap(nextMapId);
+        room.walls = mapData ? (mapData.walls || []) : [];
+        room.portals = mapData ? (mapData.portals || []) : [];
+        room.poisonZones = mapData ? (mapData.poisonZones || []) : [];
+
+        io.to(room.id).emit('room_joined', {
+            roomId: room.id,
+            mode: room.mode,
+            mapId: room.mapId,
+            state: room.state,
+            players: Object.keys(room.players).filter(id => !id.startsWith('bot_')).length,
+            total: Object.keys(room.players).length
+        });
+        io.to(room.id).emit('chat', `地图已切换为 [${nextMapId}]`);
     });
 
     socket.on('start_room', () => {
@@ -315,6 +342,7 @@ io.on('connection', (socket) => {
             roomList.push({
                 roomId: room.id,
                 mode: room.mode,
+                mapId: room.mapId,
                 state: room.state,
                 humans: humanCount,
                 total: totalCount
@@ -378,9 +406,53 @@ io.on('connection', (socket) => {
         if (room.state !== 'playing') return;
 
         const player = room.players[socket.id];
-        if (player && !player.isDead) {
-            player.vx = inputData.x * player.speed;
-            player.vy = inputData.y * player.speed;
+        if (player && !player.isDead && !player.isDashing) {
+            player.inputVx = inputData.x * player.speed;
+            player.inputVy = inputData.y * player.speed;
+        }
+    });
+
+    socket.on('dash', (dirData) => {
+        const roomId = playerRooms[socket.id];
+        if (!roomId || !rooms[roomId]) return;
+        const room = rooms[roomId];
+        if (room.state !== 'playing') return;
+
+        const player = room.players[socket.id];
+        if (player && !player.isDead && player.dashCooldown <= 0 && player.stamina >= 30) {
+            // Initiate dash
+            player.isDashing = true;
+            player.dashCooldown = 0.5; // 0.5 seconds cooldown (relies on stamina)
+            player.dashTimer = 0.2; // 0.2 seconds dash duration
+            player.invincibleTimer = 0.2; // 冲刺期间短时间无敌
+            player.stamina -= 30; // 消耗体力
+
+            // Determine dash direction
+            let dx = dirData.x;
+            let dy = dirData.y;
+
+            // If no explicit direction from input, try using current velocity
+            if (dx === 0 && dy === 0) {
+                if (player.vx !== 0 || player.vy !== 0) {
+                    dx = player.vx;
+                    dy = player.vy;
+                } else {
+                    // Default to right if completely still
+                    dx = 1;
+                    dy = 0;
+                }
+            }
+
+            // Normalize and apply dash speed multiplier (e.g. 4x base speed)
+            const len = Math.hypot(dx, dy);
+            if (len > 0) {
+                const dashSpeed = player.baseSpeed * 4;
+                player.dashVx = (dx / len) * dashSpeed;
+                player.dashVy = (dy / len) * dashSpeed;
+
+                // Optional: Emit dash effect packet
+                io.to(room.id).emit('effect', { type: 'dash', x: player.x, y: player.y, color: 'white' });
+            }
         }
     });
 
@@ -397,7 +469,12 @@ io.on('connection', (socket) => {
             const dy = targetData.y - player.y;
 
             const weaponStats = WEAPONS[player.weapon] || WEAPONS['bow'];
-            const charge = Math.max(0, Math.min(targetData.charge || 0, 1));
+            let charge = Math.max(0, Math.min(targetData.charge || 0, 1));
+
+            // 无限火力 BUFF
+            if (player.infiniteChargeTimer > 0) {
+                charge = 1.0;
+            }
 
             let amount = weaponStats.amount;
             let spreadAngle = weaponStats.spreadAngle;
@@ -499,6 +576,32 @@ io.on('connection', (socket) => {
             total: totalCount
         });
         io.to(room.id).emit('chat', `一个 Bot 已被移除`);
+    });
+
+    socket.on('leave_room', () => {
+        const roomId = playerRooms[socket.id];
+        if (roomId && rooms[roomId]) {
+            const room = rooms[roomId];
+            delete room.players[socket.id];
+
+            // 房间内没有活人则清理房间
+            const hasHumans = Object.keys(room.players).some(pid => !pid.startsWith('bot_'));
+            if (!hasHumans) {
+                console.log(`[Server] Room ${roomId} empty. Destroying...`);
+                delete rooms[roomId];
+            } else {
+                io.to(roomId).emit('room_joined', {
+                    roomId: room.id,
+                    mode: room.mode,
+                    mapId: room.mapId,
+                    state: room.state,
+                    players: Object.keys(room.players).filter(id => !id.startsWith('bot_')).length,
+                    total: Object.keys(room.players).length
+                });
+            }
+        }
+        delete playerRooms[socket.id];
+        socket.leave(roomId);
     });
 
     socket.on('disconnect', () => {
@@ -681,6 +784,41 @@ setInterval(() => {
                     }
                 }
 
+                // === 新增：草丛隐藏 (Bush) ===
+                let inBush = false;
+                if (room.bushes && room.bushes.length > 0) {
+                    for (const bush of room.bushes) {
+                        const dist = Math.hypot(player.x - bush.x, player.y - bush.y);
+                        if (dist < bush.radius) { // 这里简化为只要中心点在里面即算隐身
+                            inBush = true;
+                            break;
+                        }
+                    }
+                }
+                player.isInvisible = inBush;
+
+                // === 新增：跳板 (Jump Pad) ===
+                if (room.jumpPads && room.jumpPads.length > 0) {
+                    if ((player.jumpPadCooldown || 0) > 0) {
+                        player.jumpPadCooldown -= dt;
+                    } else {
+                        for (const pad of room.jumpPads) {
+                            const dist = Math.hypot(player.x - pad.x, player.y - pad.y);
+                            if (dist < pad.radius + player.radius) {
+                                // 触发跳板弹射
+                                player.isDashing = true;
+                                player.dashTimer = 0.5; // 弹射持续 0.5 秒
+                                player.dashCooldown = 0;
+                                player.dashVx = pad.dirX * pad.power;
+                                player.dashVy = pad.dirY * pad.power;
+                                player.jumpPadCooldown = 1.0; // 冷却
+                                io.to(room.id).emit('effect', { type: 'pickup', x: pad.x, y: pad.y, color: '#ffbd00' });
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 // === 缩圈 (Safe Zone) 区域外伤害 ===
                 if (room.safeZone) {
                     const distToCenter = Math.hypot(player.x - room.safeZone.x, player.y - room.safeZone.y);
@@ -735,6 +873,9 @@ setInterval(() => {
                         player.y = Math.random() * (GAME_HEIGHT - 100) + 50;
                         player.vx = 0;
                         player.vy = 0;
+                        player.isDashing = false;
+                        player.dashCooldown = 0;
+                        player.dashTimer = 0;
                         player.buffExp = 0;
                         player.hasMultishot = false;
                         player.speed = player.baseSpeed;
@@ -814,8 +955,15 @@ setInterval(() => {
             // === Ranged 怪物射击 ===
             if (monster.type === 'ranged' && !monster.isBoss) {
                 monster.shootTimer -= dt;
+
+                // 攻击预警：如果距离下次射击小于 0.8 秒，表示正在蓄力预警
+                monster.isCharging = monster.shootTimer < 0.8 && monster.shootTimer > 0;
+                monster.chargeRatio = monster.isCharging ? 1 - (monster.shootTimer / 0.8) : 0;
+
                 if (monster.shootTimer <= 0) {
                     monster.shootTimer = 2.0 + Math.random(); // 2~3 秒随机
+                    monster.isCharging = false;
+                    monster.chargeRatio = 0;
                     const target = room.players[monster.targetId];
                     if (target && !target.isDead) {
                         const dist = Math.hypot(target.x - monster.x, target.y - monster.y);
@@ -881,7 +1029,7 @@ setInterval(() => {
 
             // 怪物碰撞玩家：适1点伤害（而非秒杀）
             for (const [playerId, player] of Object.entries(room.players)) {
-                if (!player.isDead && !player.invincible && checkCollision(monster, player)) {
+                if (!player.isDead && !player.invincible && player.invincibleTimer <= 0 && checkCollision(monster, player)) {
                     if (player.hasShield) {
                         player.hasShield = false;
                         player.shieldTimer = 15;
@@ -932,7 +1080,7 @@ setInterval(() => {
             if (trap.active) {
                 for (const [playerId, player] of Object.entries(room.players)) {
                     // 不能炸到属于自己的地雷
-                    if (!player.isDead && trap.ownerId !== playerId && checkCollision(trap, player)) {
+                    if (!player.isDead && trap.ownerId !== playerId && !player.invincible && player.invincibleTimer <= 0 && checkCollision(trap, player)) {
                         if (player.hasShield) {
                             player.hasShield = false;
                             player.shieldTimer = 15;
@@ -1008,15 +1156,141 @@ setInterval(() => {
             }
         }
 
+        // === Safe Zone (Ring/Gas) Logic ===
+        if (room.state === 'playing') {
+            room.safeZoneShrinkTimer += dt;
+            // Begin shrinking after 15 seconds
+            if (room.safeZoneShrinkTimer > 15) {
+                // Shrink at a rate of 20 pixels per second
+                if (room.safeZone.radius > 200) {
+                    room.safeZone.radius -= 20 * dt;
+                }
+            }
+
+            // Check players outside the safe zone
+            for (const [id, player] of Object.entries(room.players)) {
+                if (!player.isDead) {
+                    const distToCenter = Math.hypot(player.x - room.safeZone.x, player.y - room.safeZone.y);
+                    if (distToCenter > room.safeZone.radius + player.radius) {
+                        player.safeZoneDamageTimer = (player.safeZoneDamageTimer || 0) + dt;
+                        if (player.safeZoneDamageTimer >= 1.0) { // 1 dmg per second
+                            player.safeZoneDamageTimer -= 1.0;
+                            player.hp -= 1;
+                            io.to(room.id).emit('text', { x: player.x, y: player.y - 40, text: '-1 毒圈', color: '#ff00ff' });
+                            io.to(player.id).emit('effect', { type: 'player_hit', x: player.x, y: player.y, color: '#ff00ff' });
+
+                            if (player.hp <= 0) {
+                                player.hp = 0;
+                                player.isDead = true;
+                                player.lives--;
+                                player.respawnTimer = player.lives > 0 ? 5 : 0;
+                                io.to(room.id).emit('effect', { type: 'kill', x: player.x, y: player.y, color: player.color });
+                                io.to(player.id).emit('shake', 1.5);
+                                io.to(room.id).emit('kill_feed', { killer: '毒圈', victim: player.name });
+                                if (player.lives <= 0) {
+                                    io.to(player.id).emit('text', { x: player.x, y: player.y + 20, text: '生命耗尽!', color: '#ff0000' });
+                                }
+                            }
+                        }
+                    } else {
+                        player.safeZoneDamageTimer = 0;
+                    }
+                }
+            }
+        }
+
+        // === Supply Drop Logic ===
+        if (room.state === 'playing') {
+            room.supplyDropTimer -= dt;
+
+            // 3秒预警
+            if (room.supplyDropTimer > 0 && room.supplyDropTimer <= 3 && !room.supplyWarningSent) {
+                room.supplyDropX = Math.random() * (GAME_WIDTH - 200) + 100;
+                room.supplyDropY = Math.random() * (GAME_HEIGHT - 200) + 100;
+                io.to(room.id).emit('supply_warning', { x: room.supplyDropX, y: room.supplyDropY });
+                room.supplyWarningSent = true;
+            }
+
+            // 降落
+            if (room.supplyDropTimer <= 0) {
+                const dropTypes = ['heal', 'shield', 'infinite_charge'];
+                const bType = dropTypes[Math.floor(Math.random() * dropTypes.length)];
+                const boxId = `supply_${Date.now()}`;
+
+                room.supplyBoxes[boxId] = new SupplyBox(boxId, room.supplyDropX, room.supplyDropY, bType);
+                io.to(room.id).emit('supply_dropped', { id: boxId, x: room.supplyDropX, y: room.supplyDropY, type: bType });
+
+                // reset drop timer (e.g., drops every 45s)
+                room.supplyDropTimer = 45;
+                room.supplyWarningSent = false;
+            }
+        }
+
+        // Update supply boxes
+        for (const [id, box] of Object.entries(room.supplyBoxes)) {
+            box.lifeTime -= dt;
+            if (box.lifeTime <= 0) {
+                delete room.supplyBoxes[id];
+                continue;
+            }
+
+            // 玩家触碰补给箱
+            for (const [playerId, player] of Object.entries(room.players)) {
+                if (!player.isDead && checkCollision(box, player)) {
+                    let msg = '';
+                    if (box.type === 'heal') {
+                        player.hp = Math.min(player.hp + 2, player.maxHp + 1); // 甚至可以超血量上限
+                        if (player.hp > player.maxHp) player.maxHp = player.hp;
+                        msg = '+生命回复!';
+                        io.to(room.id).emit('effect', { type: 'pickup', x: box.x, y: box.y, color: '#0f0' });
+                    } else if (box.type === 'shield') {
+                        player.hasShield = true;
+                        player.shieldTimer = 0;
+                        msg = '神盾覆体!';
+                        io.to(room.id).emit('effect', { type: 'pickup', x: box.x, y: box.y, color: '#0ff' });
+                    } else if (box.type === 'infinite_charge') {
+                        player.infiniteChargeTimer = 10; // 10秒无限蓄力
+                        msg = '无限火力 (10s)!';
+                        io.to(room.id).emit('effect', { type: 'pickup', x: box.x, y: box.y, color: '#ff0' });
+                    }
+
+                    io.to(player.id).emit('text', { x: player.x, y: player.y - 40, text: msg, color: '#ff0' });
+                    io.to(room.id).emit('supply_picked', { id: id, playerId: playerId });
+
+                    delete room.supplyBoxes[id];
+                    break;
+                }
+            }
+        }
+
+        // Infinite charge timer decrement
+        for (const [id, player] of Object.entries(room.players)) {
+            if (player.infiniteChargeTimer > 0) {
+                player.infiniteChargeTimer -= dt;
+                if (player.infiniteChargeTimer <= 0) {
+                    player.infiniteChargeTimer = 0;
+                    io.to(player.id).emit('text', { x: player.x, y: player.y - 20, text: '无限火力结束', color: '#888' });
+                }
+            }
+        }
+
         // Update arrows
         for (const [id, arrow] of Object.entries(room.arrows)) {
+            if (arrow.isDead) {
+                arrow.deadTicks = (arrow.deadTicks || 0) + 1;
+                if (arrow.deadTicks > 2) {
+                    delete room.arrows[id];
+                }
+                continue;
+            }
+
             arrow.updatePosition(dt);
 
             let arrowHit = false;
 
             // 箭矢-玩家碰撞
             for (const [playerId, player] of Object.entries(room.players)) {
-                if (!player.isDead && arrow.ownerId !== playerId && checkCollision(arrow, player) && !arrow.hitTargets.has(playerId)) {
+                if (!player.isDead && !player.invincible && player.invincibleTimer <= 0 && arrow.ownerId !== playerId && checkCollision(arrow, player) && !arrow.hitTargets.has(playerId)) {
                     // 标记该玩家已被此箭击中过
                     arrow.hitTargets.add(playerId);
 
@@ -1030,7 +1304,8 @@ setInterval(() => {
                         io.to(room.id).emit('effect', { type: 'pickup', x: player.x, y: player.y, color: '#00ffff' });
                     } else {
                         player.hp -= damage;
-                        io.to(player.id).emit('shake', 0.3 + charge * 0.5);
+                        io.to(player.id).emit('shake', 1.0 + charge * 1.5); // 增加震动幅度
+                        io.to(room.id).emit('text', { x: player.x, y: player.y - 30, text: `-${damage}`, color: '#ff2222' });
 
                         if (player.hp <= 0) {
                             // 玩家死亡
@@ -1043,8 +1318,10 @@ setInterval(() => {
 
                             if (room.players[arrow.ownerId]) {
                                 room.players[arrow.ownerId].score++;
-                                io.to(arrow.ownerId).emit('text', { x: player.x, y: player.y, text: '+1 击杀', color: 'yellow' });
-                                io.to(arrow.ownerId).emit('shake', 0.5);
+                                // 击杀提示也可以作为 Kill Feed 广播给所有人
+                                io.to(room.id).emit('text', { x: player.x, y: player.y - 50, text: '击杀!', color: 'yellow' });
+                                io.to(room.id).emit('kill_feed', { killer: room.players[arrow.ownerId].name, victim: player.name });
+                                io.to(arrow.ownerId).emit('shake', 0.8);
                             }
                             if (player.lives <= 0) {
                                 io.to(player.id).emit('text', { x: player.x, y: player.y + 20, text: '生命耗尽!', color: '#ff0000' });
@@ -1086,6 +1363,19 @@ setInterval(() => {
                         arrow.hitTargets.add(monsterId);
                         const damage = arrow.damage || 1;
 
+                        // 计算物理击退反馈
+                        // 箭矢速度越快（蓄力越满），击退力越强
+                        // Boss 具有较高击退抗性，只有高蓄力箭能产生微弱击退
+                        if (!monster.isBoss || arrow.speed > 800) {
+                            const kbForce = (arrow.speed / 400) * (monster.isBoss ? 150 : 600);
+                            const dirLen = Math.hypot(arrow.vx, arrow.vy);
+                            if (dirLen > 0) {
+                                monster.knockbackVx = (arrow.vx / dirLen) * kbForce;
+                                monster.knockbackVy = (arrow.vy / dirLen) * kbForce;
+                                monster.stunTimer = monster.isBoss ? 0.05 : 0.15; // 短暂硬直
+                            }
+                        }
+
                         monster.hp -= damage;
                         if (monster.hp <= 0) {
                             // 怪物死亡
@@ -1110,15 +1400,14 @@ setInterval(() => {
                                 const coinReward = monster.isBoss ? 3 : 1;
                                 room.players[arrow.ownerId].score += scoreReward;
                                 room.players[arrow.ownerId].coinsEarned += coinReward;
-                                const rewardText = monster.isBoss ? `+${scoreReward} Boss击杀 +${coinReward} 币` : `+${scoreReward} 斩尸 +${coinReward} 币`;
+                                const rewardText = monster.isBoss ? `+${scoreReward} Boss击杀 +${coinReward} 币` : `+${scoreReward} 击杀 +${coinReward} 币`;
                                 io.to(arrow.ownerId).emit('text', { x: monster.x, y: monster.y, text: rewardText, color: monster.isBoss ? '#ff0' : 'gold' });
+                                io.to(room.id).emit('kill_feed', { killer: room.players[arrow.ownerId].name, victim: monster.isBoss ? '首领' : '怪物' });
                             }
                         } else {
                             // 怪物受伤但未死：显示受伤反馈
                             io.to(room.id).emit('effect', { type: 'monster_hit', x: monster.x, y: monster.y, color: monster.color, hp: monster.hp, maxHp: monster.maxHp });
-                            if (room.players[arrow.ownerId]) {
-                                io.to(arrow.ownerId).emit('text', { x: monster.x, y: monster.y - 20, text: `命中! (${monster.hp}/${monster.maxHp})`, color: 'orange' });
-                            }
+                            io.to(room.id).emit('text', { x: monster.x, y: monster.y - 20, text: `-${damage}`, color: '#ffaa00' });
                         }
 
                         // === 追加天赋：毒箭 ===
@@ -1147,6 +1436,7 @@ setInterval(() => {
                                     delete room.monsters[nearest.id];
                                 } else {
                                     io.to(room.id).emit('effect', { type: 'monster_hit', x: nearest.x, y: nearest.y, color: nearest.color });
+                                    io.to(room.id).emit('text', { x: nearest.x, y: nearest.y - 20, text: '-1', color: '#ffaa00' });
                                 }
                             }
                         }
@@ -1195,6 +1485,20 @@ setInterval(() => {
                                 io.to(room.id).emit('effect', { type: 'kill', x: wall.x + wall.w / 2, y: wall.y + wall.h / 2, color: '#8b4513' });
                                 // 移除墙体
                                 room.walls.splice(i, 1);
+
+                                // 掉落金币或Buff的概率 (各10%)
+                                if (Math.random() < 0.1) {
+                                    const buffId = `buff_${room.counters.buff++}`;
+                                    // 毁坏掩体只掉落普通增益
+                                    const bType = Math.random() < 0.5 ? 'sprint' : 'multishot';
+                                    room.buffs[buffId] = new BuffDrop(buffId, wall.x + wall.w / 2, wall.y + wall.h / 2, bType);
+                                } else if (Math.random() < 0.2) {
+                                    // 模拟金币掉落，直接给射碎墙的人加钱
+                                    if (room.players[arrow.ownerId]) {
+                                        room.players[arrow.ownerId].coinsEarned += 1;
+                                        io.to(arrow.ownerId).emit('text', { x: wall.x + wall.w / 2, y: wall.y + wall.h / 2, text: '+1 币', color: 'gold' });
+                                    }
+                                }
                             }
                         } else {
                             // 不可破坏的墙体只阻挡并弹粒子
@@ -1207,9 +1511,7 @@ setInterval(() => {
                 }
             }
 
-            if (arrowHit && !arrow.isDead) {
-                delete room.arrows[id];
-            } else if (arrow.isDead) {
+            if (arrow.isDead) {
                 // Arrow didn't hit anything and died -> spawn monster OR trap
                 if (arrow.isInsidious) {
                     // 生成陷阱
@@ -1260,7 +1562,10 @@ setInterval(() => {
                         room.monsters[monsterId] = monster;
                     }
                 }
-                delete room.arrows[id];
+
+                // 将箭头停在碰撞瞬间的位置，以便客户端进行平滑贴附渲染
+                arrow.vx = 0;
+                arrow.vy = 0;
             }
         }
 
@@ -1277,9 +1582,20 @@ function startNewRound(room) {
     room.monsters = {};
     room.bees = {};
     room.buffs = {};
+    room.supplyBoxes = {};
+    room.supplyDropTimer = 45;
+    room.supplyWarningSent = false;
     room.traps = {};
     room.safeZone = { x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2, radius: Math.max(GAME_WIDTH, GAME_HEIGHT) };
     room.safeZoneShrinkTimer = 0;
+
+    // 重新从地图加载初始的墙体、毒区、草丛和跳板等环境
+    const mapData = getMap(room.mapId || 'standard') || { walls: [], portals: [], poisonZones: [], bushes: [], jumpPads: [] };
+    room.walls = (mapData.walls || []).map(w => new Wall(w.id, w.x, w.y, w.w, w.h, w.isDestructible, w.hp));
+    room.portals = (mapData.portals || []).map(p => new Portal(p.id, p.x, p.y, p.targetId, p.radius));
+    room.poisonZones = (mapData.poisonZones || []).map(pz => new PoisonZone(pz.id, pz.x, pz.y, pz.radius, pz.dps));
+    room.bushes = (mapData.bushes || []).map(b => new Bush(b.id, b.x, b.y, b.radius));
+    room.jumpPads = (mapData.jumpPads || []).map(jp => new JumpPad(jp.id, jp.x, jp.y, jp.radius, jp.dirX, jp.dirY, jp.power));
 
     for (const [id, player] of Object.entries(room.players)) {
         applyModeStats(player, room.mode);

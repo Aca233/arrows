@@ -1,7 +1,7 @@
 // mapLoader.js — 地图加载/保存模块
 const fs = require('fs');
 const path = require('path');
-const { Wall, Portal, PoisonZone } = require('./gameLogic');
+const { Wall, Portal, PoisonZone, Bush, JumpPad } = require('./gameLogic');
 
 const MAPS_DIR = path.join(__dirname, 'maps');
 
@@ -22,7 +22,9 @@ function loadMap(mapId) {
         return {
             walls: (data.walls || []).map(w => new Wall(w.id, w.x, w.y, w.w, w.h, w.isDestructible, w.hp)),
             portals: (data.portals || []).map(p => new Portal(p.id, p.x, p.y, p.targetId, p.radius)),
-            poisonZones: (data.poisonZones || []).map(pz => new PoisonZone(pz.id, pz.x, pz.y, pz.radius, pz.dps))
+            poisonZones: (data.poisonZones || []).map(pz => new PoisonZone(pz.id, pz.x, pz.y, pz.radius, pz.dps)),
+            bushes: (data.bushes || []).map(b => new Bush(b.id, b.x, b.y, b.radius)),
+            jumpPads: (data.jumpPads || []).map(jp => new JumpPad(jp.id, jp.x, jp.y, jp.radius, jp.dirX, jp.dirY, jp.power))
         };
     } catch (err) {
         console.error(`加载地图失败 [${mapId}]:`, err.message);
@@ -85,6 +87,21 @@ function saveMap(mapData) {
             y: Math.round(pz.y),
             radius: pz.radius || 100,
             dps: pz.dps || 1
+        })),
+        bushes: (mapData.bushes || []).map(b => ({
+            id: b.id,
+            x: Math.round(b.x),
+            y: Math.round(b.y),
+            radius: b.radius || 60
+        })),
+        jumpPads: (mapData.jumpPads || []).map(jp => ({
+            id: jp.id,
+            x: Math.round(jp.x),
+            y: Math.round(jp.y),
+            radius: jp.radius || 40,
+            dirX: jp.dirX || 1,
+            dirY: jp.dirY || 0,
+            power: jp.power || 1000
         })),
         spawnZones: mapData.spawnZones || []
     };

@@ -104,6 +104,10 @@ const SoundFX = {
     ding: () => {
         // 单次清脆提示音
         playTone(600, 'sine', 0.1, 0.05);
+    },
+    trapPlaced: () => {
+        // 放置道具/陷阱或收到补给降临的音效
+        playTone(300, 'square', 0.1, 0.08, 100);
     }
 };
 

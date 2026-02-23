@@ -4,9 +4,10 @@ const ctx = canvas.getContext('2d');
 const scoreBoard = document.getElementById('score-board');
 
 let myId = null;
-let gameState = { players: {}, arrows: {}, monsters: {}, walls: [], bees: {}, buffs: {}, traps: {} };
+let gameState = { players: {}, arrows: {}, monsters: {}, walls: [], bees: {}, buffs: {}, supplyBoxes: {}, traps: {} };
 let targetState = null;
 let currentMode = 'standard';
+let currentMapId = 'standard';
 let roomState = 'idle'; // idle | waiting | playing | round_end
 
 // 特效组件集合
@@ -15,6 +16,7 @@ const floatingTexts = [];
 let screenShake = 0;
 let currentRoomId = '';
 let pendingBotOps = [];
+let supplyDropAlert = null;
 
 // === 摄像机系统 ===
 let camX = 0;  // 摄像机左上角在世界中的 X
@@ -29,7 +31,8 @@ const keys = {
     a: false,
     s: false,
     d: false,
-    ' ': false // 空格用于“明察”技能扫描
+    ' ': false, // 空格用于“明察”技能扫描
+    shift: false // Shift用于冲刺
 };
 
 socket.on('init', (id) => {
@@ -47,6 +50,9 @@ socket.on('room_joined', (roomInfo) => {
         currentRoomId = roomInfo.roomId || '';
         if (roomInfo.mode) {
             currentMode = roomInfo.mode;
+        }
+        if (roomInfo.mapId) {
+            currentMapId = roomInfo.mapId;
         }
         if (roomInfo.state) {
             roomState = roomInfo.state;
@@ -132,14 +138,35 @@ function updateLobbyUI() {
     });
 }
 
+function updateLobbyUIState() {
+    const joinSection = document.getElementById('room-join-section');
+    const roomStaging = document.getElementById('room-staging');
+    const botControls = document.getElementById('bot-controls');
+    const startGameBtn = document.getElementById('start-game-btn');
+
+    if (currentRoomId) {
+        if (joinSection) joinSection.style.display = 'none';
+        if (roomStaging) roomStaging.style.display = 'block';
+        if (botControls) botControls.style.display = 'block';
+        if (startGameBtn) startGameBtn.style.display = 'inline-block';
+    } else {
+        if (joinSection) joinSection.style.display = 'block';
+        if (roomStaging) roomStaging.style.display = 'none';
+        if (botControls) botControls.style.display = 'none';
+        if (startGameBtn) startGameBtn.style.display = 'none';
+    }
+}
+
 function updateLobbyRoomInfo(roomInfo = {}) {
     const roomIdEl = document.getElementById('lobby-room-id');
     const roomModeEl = document.getElementById('lobby-room-mode');
+    const roomMapEl = document.getElementById('lobby-room-map');
     const roomStateEl = document.getElementById('lobby-room-state');
     const roomCountEl = document.getElementById('lobby-player-count');
 
     if (roomIdEl) roomIdEl.innerText = currentRoomId || '未创建';
     if (roomModeEl) roomModeEl.innerText = currentMode;
+    if (roomMapEl) roomMapEl.innerText = currentMapId;
 
     const mappedState = roomInfo.state || roomState || 'idle';
     if (mappedState) {
@@ -159,12 +186,34 @@ function updateLobbyRoomInfo(roomInfo = {}) {
         const total = typeof roomInfo.total === 'number' ? roomInfo.total : players;
         roomCountEl.innerText = `${players} 真人 / ${total} 总人数`;
     }
+
+    updateLobbyUIState();
+}
+
+// Fetch and render map list dynamically
+function loadAndRenderMapList() {
+    fetch('/api/maps')
+        .then(res => res.json())
+        .then(maps => {
+            const container = document.getElementById('map-selection-list');
+            if (!container) return;
+            container.innerHTML = '';
+            maps.forEach(m => {
+                const btn = document.createElement('button');
+                btn.className = 'menu-btn mode-btn';
+                btn.innerText = m.name;
+                btn.onclick = () => setRoomMap(m.id);
+                container.appendChild(btn);
+            });
+        })
+        .catch(err => console.error('Failed to load map list:', err));
 }
 
 // 页面加载完成后为大厅天赋按钮绑定交互
 document.addEventListener('DOMContentLoaded', () => {
     updateLobbyUI();
     updateLobbyRoomInfo({ state: roomState });
+    loadAndRenderMapList();
 
     const talentBtns = document.querySelectorAll('#talent-selection .talent-btn');
     talentBtns.forEach(btn => {
@@ -249,7 +298,19 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// 在大厅创建/加入房间（不立即开始）
+// 在大厅创建/加入/退出房间
+window.leaveRoom = function () {
+    if (window.initAudio) window.initAudio();
+    if (window.SoundFX) SoundFX.ding();
+
+    socket.emit('leave_room');
+    currentRoomId = '';
+    roomState = 'idle';
+    targetState = null;
+    gameState.players = {};
+    updateLobbyRoomInfo({ state: 'idle', mode: 'standard', mapId: 'standard', players: 0, total: 0 });
+};
+
 window.createRoom = function () {
     if (window.initAudio) window.initAudio();
     if (window.SoundFX) SoundFX.ding();
@@ -265,6 +326,7 @@ window.createRoom = function () {
         roomId: roomIdInput,
         name: playerName,
         mode: currentMode,
+        mapId: currentMapId,
         talent: selectedTalent,
         weapon: selectedWeapon
     });
@@ -285,6 +347,18 @@ window.setRoomMode = function (mode) {
     socket.emit('set_room_mode', { mode: nextMode });
 };
 
+window.setRoomMap = function (mapId) {
+    if (!currentRoomId) {
+        alert('请先创建/加入房间');
+        return;
+    }
+
+    const nextMapId = mapId || 'standard';
+    currentMapId = nextMapId;
+    updateLobbyRoomInfo({ mapId: currentMapId });
+    socket.emit('set_room_map', { mapId: nextMapId });
+};
+
 window.startGame = function () {
     if (!currentRoomId) {
         alert('请先创建/加入房间');
@@ -298,6 +372,19 @@ window.startGame = function () {
     const gameContainer = document.getElementById('game-container');
     if (lobbyPanel) lobbyPanel.style.display = 'none';
     if (gameContainer) gameContainer.style.display = 'flex';
+};
+
+window.exitGame = function () {
+    if (window.initAudio) window.initAudio();
+    if (window.SoundFX) SoundFX.ding();
+
+    if (confirm('确定要退出当前游戏并返回大厅吗？')) {
+        leaveRoom();
+        const lobbyPanel = document.getElementById('lobby-panel');
+        const gameContainer = document.getElementById('game-container');
+        if (lobbyPanel) lobbyPanel.style.display = '';
+        if (gameContainer) gameContainer.style.display = 'none';
+    }
 };
 
 // === 房间浏览器 (Room Browser) ===
@@ -366,13 +453,14 @@ socket.on('room_list', (list) => {
                 <div class="room-info-title">房间号: ${room.roomId}</div>
                 <div class="room-info-details">
                     <span>模式: ${modeStr}</span>
+                    <span>地图: ${room.mapId || '未知'}</span>
                     <span style="color: ${stateColor}">状态: ${stateStr}</span>
                     <span>人数: ${room.humans} / ${room.total} (满20)</span>
                 </div>
             </div>
             <button class="menu-btn small-btn" 
                 style="padding: 10px 15px;"
-                onclick="joinRoomFromList('${room.roomId}', '${room.mode}')"
+                onclick="joinRoomFromList('${room.roomId}', '${room.mode}', '${room.mapId || 'standard'}')"
                 ${isFull ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>
                 ${isFull ? '已满' : '加入'}
             </button>
@@ -382,7 +470,7 @@ socket.on('room_list', (list) => {
     container.innerHTML = html;
 });
 
-window.joinRoomFromList = function (roomId, mode) {
+window.joinRoomFromList = function (roomId, mode, mapId) {
     if (window.initAudio) window.initAudio();
     if (window.SoundFX) SoundFX.ding();
 
@@ -398,17 +486,19 @@ window.joinRoomFromList = function (roomId, mode) {
     const playerName = nameInput || '特工';
 
     currentMode = mode;
+    currentMapId = mapId;
 
     socket.emit('join', {
         roomId: roomId,
         name: playerName,
         mode: mode,
+        mapId: mapId,
         talent: selectedTalent,
         weapon: selectedWeapon
     });
 
     roomState = 'waiting';
-    updateLobbyRoomInfo({ state: roomState, mode: mode });
+    updateLobbyRoomInfo({ state: roomState, mode: mode, mapId: mapId });
 };
 
 // === Bot 管理函数 ===
@@ -447,6 +537,9 @@ socket.on('state', (state) => {
     if (state.mode) {
         currentMode = state.mode;
     }
+    if (state.mapId) {
+        currentMapId = state.mapId;
+    }
     if (state.state) {
         roomState = state.state;
     }
@@ -458,14 +551,33 @@ socket.on('state', (state) => {
     updateLobbyRoomInfo({
         roomId: currentRoomId,
         mode: currentMode,
+        mapId: currentMapId,
         state: roomState,
         players: Object.values(state.players || {}).filter(p => !p.id.startsWith('bot_')).length,
         total: Object.keys(state.players || {}).length
     });
 
+    const playersListEl = document.getElementById('lobby-players-list');
+    if (playersListEl && state.players && currentRoomId) {
+        let html = '';
+        Object.values(state.players).forEach(p => {
+            const isBot = p.id.startsWith('bot_');
+            const icon = isBot ? '🤖' : '👤';
+            const pName = p.name || (isBot ? 'AI' : '特工');
+            const safeName = pName.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            html += `<div style="background: rgba(255,255,255,0.1); padding: 5px 10px; border-radius: 20px; font-size: 14px; border: 1px solid ${p.color}; color: ${p.color}; display: flex; align-items: center; gap: 5px;">${icon} ${safeName}</div>`;
+        });
+        if (!html) html = '<span style="color:#aaa; font-size:14px;">等待...</span>';
+        playersListEl.innerHTML = html;
+    }
+
     targetState = state;
     if (Object.keys(gameState.players).length === 0) {
         gameState = JSON.parse(JSON.stringify(state));
+    }
+
+    if (!gameState.supplyBoxes) {
+        gameState.supplyBoxes = {};
     }
     updateScoreBoard();
 });
@@ -525,6 +637,17 @@ socket.on('text', (data) => {
     spawnFloatingText(data.x, data.y, data.text, data.color);
 });
 
+socket.on('supply_warning', (data) => {
+    supplyDropAlert = { x: data.x, y: data.y, timer: 3.0 }; // 3秒倒计时预警
+    if (window.SoundFX) window.SoundFX.ding(); // 用叮声音作为预警
+});
+
+socket.on('supply_dropped', (data) => {
+    if (window.SoundFX) window.SoundFX.trapPlaced(); // 复用声音
+    supplyDropAlert = null;
+    floatingTexts.push({ x: data.x, y: data.y, text: '📦 补给降临!', color: '#ffbd00', life: 2.0, vy: -20 });
+});
+
 socket.on('chat', (msg) => {
     const chatDiv = document.createElement('div');
     chatDiv.style.position = 'absolute';
@@ -546,10 +669,61 @@ socket.on('chat', (msg) => {
     }, 3000);
 });
 
+// === 击杀提示 (Kill Feed) ===
+const killFeedContainer = document.createElement('div');
+killFeedContainer.id = 'kill-feed';
+killFeedContainer.style.position = 'absolute';
+killFeedContainer.style.top = '20px';
+killFeedContainer.style.right = '20px';
+killFeedContainer.style.display = 'flex';
+killFeedContainer.style.flexDirection = 'column';
+killFeedContainer.style.alignItems = 'flex-end';
+killFeedContainer.style.pointerEvents = 'none'; // 防止遮挡点击
+killFeedContainer.style.zIndex = '1000';
+document.body.appendChild(killFeedContainer);
+
+socket.on('kill_feed', (data) => {
+    const feedItem = document.createElement('div');
+    feedItem.style.background = 'rgba(0, 0, 0, 0.6)';
+    feedItem.style.color = 'white';
+    feedItem.style.padding = '5px 15px';
+    feedItem.style.marginBottom = '5px';
+    feedItem.style.borderRadius = '3px';
+    feedItem.style.fontSize = '16px';
+    feedItem.style.fontFamily = 'monospace';
+    feedItem.style.boxShadow = '0 2px 4px rgba(0,0,0,0.5)';
+    feedItem.style.opacity = '1';
+    feedItem.style.transition = 'opacity 0.5s';
+
+    // 内容格式:  [杀手] ⚔️ [被害者]
+    feedItem.innerHTML = `<span style="color:#0f0">${data.killer}</span> ⚔️ <span style="color:#f44">${data.victim}</span>`;
+
+    killFeedContainer.appendChild(feedItem);
+
+    // 限制最多显示数量 (例如5条)
+    if (killFeedContainer.children.length > 5) {
+        killFeedContainer.removeChild(killFeedContainer.firstChild);
+    }
+
+    // 5秒后淡出并移除
+    setTimeout(() => {
+        feedItem.style.opacity = '0';
+        setTimeout(() => {
+            if (feedItem.parentNode === killFeedContainer) {
+                killFeedContainer.removeChild(feedItem);
+            }
+        }, 500); // 等待淡出动画结束
+    }, 5000);
+});
+
 window.addEventListener('keydown', (e) => {
     if (!e.key) return; // Ignore events without a key property
     const key = e.key.toLowerCase();
     if (keys.hasOwnProperty(key)) {
+        // 防止重复触发
+        if (!keys[key] && key === 'shift') {
+            socket.emit('dash', { x: (keys.d ? 1 : 0) - (keys.a ? 1 : 0), y: (keys.s ? 1 : 0) - (keys.w ? 1 : 0) });
+        }
         keys[key] = true;
         sendInput();
     }
@@ -589,8 +763,6 @@ resizeCanvas(); // 初始化执行
 // 蓄力射击状态
 let chargeStartTime = 0;
 let isCharging = false;
-let chargeMouseX = 0;
-let chargeMouseY = 0;
 const TILE_SIZE = 40; // 视觉上的散布角（平滑插值用）
 let visualSpread = 0; // 视觉上的散布角（平滑插值用）
 
@@ -602,14 +774,14 @@ canvas.addEventListener('mousedown', (e) => {
     socket.emit('charge_start'); // 通知服务端开始蓄力（减速）
 });
 
-// 鼠标移动时实时更新目标坐标（转换为世界坐标）
+let screenMouseX = 0;
+let screenMouseY = 0;
+
+// 鼠标移动时实时更新目标坐标（转换为世界坐标所需的基础屏幕坐标）
 canvas.addEventListener('mousemove', (e) => {
     const rect = canvas.getBoundingClientRect();
-    const screenX = (e.clientX - rect.left) * (canvas.width / window.devicePixelRatio / rect.width);
-    const screenY = (e.clientY - rect.top) * (canvas.height / window.devicePixelRatio / rect.height);
-    // 屏幕坐标 + 摄像机偏移 = 世界坐标
-    chargeMouseX = screenX + camX;
-    chargeMouseY = screenY + camY;
+    screenMouseX = (e.clientX - rect.left) * (canvas.width / window.devicePixelRatio / rect.width);
+    screenMouseY = (e.clientY - rect.top) * (canvas.height / window.devicePixelRatio / rect.height);
 });
 
 canvas.addEventListener('mouseup', (e) => {
@@ -617,12 +789,9 @@ canvas.addEventListener('mouseup', (e) => {
     isCharging = false;
     socket.emit('charge_end'); // 通知服务端蓄力结束（恢复速度）
 
-    const rect = canvas.getBoundingClientRect();
-    const screenX = (e.clientX - rect.left) * (canvas.width / window.devicePixelRatio / rect.width);
-    const screenY = (e.clientY - rect.top) * (canvas.height / window.devicePixelRatio / rect.height);
     // 屏幕坐标 + 摄像机偏移 = 世界坐标
-    const x = screenX + camX;
-    const y = screenY + camY;
+    const x = screenMouseX + camX;
+    const y = screenMouseY + camY;
 
     // 飞镖无需蓄力直接满状态发射，其它按配置判断
     let chargeRatio = 1;
@@ -637,7 +806,7 @@ canvas.addEventListener('mouseup', (e) => {
 
     const me = gameState.players[myId];
     if (me) {
-        playLocalShootFeedback(me.x, me.y, x, y, chargeRatio);
+        playLocalShootFeedback(me.x, me.y, x, y, Math.max(chargeRatio, me.infiniteChargeTimer > 0 ? 1 : 0));
     }
 
     if (window.SoundFX) SoundFX.shoot();
@@ -728,8 +897,8 @@ function handleTouchMove(e) {
                 // 仅用摇杆方向作为射击方向的指示
                 const angle = Math.atan2(dy, dx);
                 // 给一个足够远的虚拟鼠标位置，使其瞄准线能画全
-                chargeMouseX = me.x + Math.cos(angle) * 1000;
-                chargeMouseY = me.y + Math.sin(angle) * 1000;
+                screenMouseX = (me.x + Math.cos(angle) * 1000) - camX;
+                screenMouseY = (me.y + Math.sin(angle) * 1000) - camY;
             }
         }
     }
@@ -771,7 +940,7 @@ function handleTouchEnd(e) {
                 if (me) {
                     const x = me.x + Math.cos(angle) * 1000;
                     const y = me.y + Math.sin(angle) * 1000;
-                    playLocalShootFeedback(me.x, me.y, x, y, chargeRatio);
+                    playLocalShootFeedback(me.x, me.y, x, y, Math.max(chargeRatio, me.infiniteChargeTimer > 0 ? 1 : 0));
                     if (window.SoundFX) SoundFX.shoot();
                     socket.emit('shoot', { x, y, charge: chargeRatio, moving: isMoving });
                 }
@@ -936,6 +1105,8 @@ function draw() {
         gameState.walls = targetState.walls;
         gameState.portals = targetState.portals;
         gameState.poisonZones = targetState.poisonZones;
+        gameState.bushes = targetState.bushes;
+        gameState.jumpPads = targetState.jumpPads;
         gameState.safeZone = targetState.safeZone;
         gameState.state = targetState.state;
         gameState.countdown = targetState.countdown;
@@ -1055,6 +1226,58 @@ function draw() {
         ctx.restore();
     }
 
+    // === 新增：画跳板 JumpPads ===
+    if (gameState.jumpPads) {
+        gameState.jumpPads.forEach(jp => {
+            ctx.beginPath();
+            ctx.arc(jp.x, jp.y, jp.radius, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 165, 0, 0.2)'; // 半透明橙色
+            ctx.fill();
+
+            // 发光边缘
+            ctx.strokeStyle = `rgba(255, 165, 0, ${0.4 + 0.3 * Math.sin(Date.now() / 150)})`;
+            ctx.lineWidth = 3;
+            ctx.shadowColor = 'orange';
+            ctx.shadowBlur = 10;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // 画一个方向箭头
+            const arrowLen = jp.radius * 0.6;
+            ctx.beginPath();
+            ctx.moveTo(jp.x, jp.y);
+            ctx.lineTo(jp.x + jp.dirX * arrowLen, jp.y + jp.dirY * arrowLen);
+            // 箭头头部
+            const headAngle = Math.atan2(jp.dirY, jp.dirX);
+            ctx.lineTo(jp.x + jp.dirX * arrowLen - Math.cos(headAngle - 0.5) * 10, jp.y + jp.dirY * arrowLen - Math.sin(headAngle - 0.5) * 10);
+            ctx.moveTo(jp.x + jp.dirX * arrowLen, jp.y + jp.dirY * arrowLen);
+            ctx.lineTo(jp.x + jp.dirX * arrowLen - Math.cos(headAngle + 0.5) * 10, jp.y + jp.dirY * arrowLen - Math.sin(headAngle + 0.5) * 10);
+            ctx.stroke();
+        });
+    }
+
+    // === 新增：画草丛 Bushes ===
+    if (gameState.bushes) {
+        gameState.bushes.forEach(b => {
+            ctx.beginPath();
+            // 绘制带有不规则波浪边缘的草丛
+            for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 8) {
+                const r = b.radius + Math.sin(angle * 6 + Date.now() / 400) * 8;
+                const px = b.x + Math.cos(angle) * r;
+                const py = b.y + Math.sin(angle) * r;
+                if (angle === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(34, 139, 34, 0.5)'; // 深绿色半透明
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(20, 100, 20, 0.8)';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+        });
+    }
+
     // Draw walls
     if (gameState.walls) {
         ctx.fillStyle = '#111';
@@ -1161,39 +1384,232 @@ function draw() {
         ctx.shadowBlur = 0; // 重置
     }
 
+    // Helper for drawing an animated monster
+    function drawAnimatedMonster(ctx, m, time) {
+        ctx.save();
+        ctx.translate(m.x, m.y);
+
+        const speed = Math.hypot(m.vx || 0, m.vy || 0);
+        const isMoving = speed > 5;
+        // Target direction angle
+        let targetAngle = m.visualAngle || 0;
+        if (m.isCharging && m.aimAngle !== undefined) {
+            targetAngle = m.aimAngle;
+        } else if (isMoving) {
+            targetAngle = Math.atan2(m.vy, m.vx);
+        }
+
+        // Lerp angle for smooth turning
+        if (m.visualAngle === undefined) {
+            m.visualAngle = targetAngle;
+        } else {
+            let delta = targetAngle - m.visualAngle;
+            while (delta > Math.PI) delta -= Math.PI * 2;
+            while (delta < -Math.PI) delta += Math.PI * 2;
+            m.visualAngle += delta * 0.15; // Monsters turn slightly slower
+        }
+
+        ctx.rotate(m.visualAngle);
+
+        // --- 基础形变与动画 ---
+        const walkCycle = isMoving ? Math.sin(time / 100 * (m.speed / 100)) : 0;
+        let scaleX = 1;
+        let scaleY = 1;
+        let color = m.color;
+
+        // Knockback / Stun shake effect
+        if (m.stunTimer > 0 || (m.knockbackVx && Math.hypot(m.knockbackVx, m.knockbackVy) > 10)) {
+            const shake = Math.sin(time / 20) * 3;
+            ctx.translate(shake, 0);
+            ctx.rotate(shake * 0.05); // Tilt back
+        } else {
+            // Breathing
+            const breathe = Math.sin(time / (m.isBoss ? 500 : 300)) * (m.isBoss ? 0.08 : 0.05);
+            scaleX = 1 + breathe + (isMoving ? 0.05 : 0);
+            scaleY = 1 - breathe - (isMoving ? 0.05 : 0);
+        }
+
+        // RAGE 状态
+        if (m.state === 'rage') {
+            const pulse = 0.7 + 0.3 * Math.sin(time / 100);
+            color = m.isBoss ? `rgba(255, 68, 0, ${pulse})` : `rgba(255, 0, 0, ${pulse})`;
+            ctx.shadowColor = '#f00';
+            ctx.shadowBlur = 25;
+            scaleX *= 1.1;
+            scaleY *= 1.1;
+        } else {
+            ctx.shadowColor = m.color;
+            ctx.shadowBlur = 15;
+        }
+
+        ctx.scale(scaleX, scaleY);
+
+        ctx.lineWidth = m.isBoss ? 3 : 2;
+        ctx.strokeStyle = m.isBoss ? '#ff0' : '#222';
+
+        // --- 根据怪物类型绘制由于没有明确的形状，我们画一些有特征的多边形/触手 ---
+        if (m.type === 'splitter') {
+            // 分裂怪：多面体/带触须的球，蠕动感更强
+            ctx.beginPath();
+            for (let i = 0; i < 8; i++) {
+                const a = i * Math.PI / 4;
+                const rOffset = Math.sin(time / 150 + i) * 3;
+                const px = Math.cos(a) * (m.radius + rOffset);
+                const py = Math.sin(a) * (m.radius + rOffset);
+                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.stroke();
+
+            // 画内部小核心
+            ctx.beginPath();
+            ctx.arc(0, 0, m.radius * 0.4, 0, Math.PI * 2);
+            ctx.fillStyle = darkenColor(color, 30);
+            ctx.fill();
+
+        } else if (m.type === 'healer') {
+            // 治疗怪：十字架形或带有光环的圆形
+            ctx.beginPath();
+            ctx.arc(0, 0, m.radius, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.stroke();
+
+            // 漂浮的光环
+            ctx.globalAlpha = 0.6 + 0.4 * Math.sin(time / 200);
+            ctx.beginPath();
+            ctx.ellipse(0, 0, m.radius * 1.5, m.radius * 1.5, 0, 0, Math.PI * 2);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+
+            // 中心加号
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(-m.radius * 0.4, -m.radius * 0.1, m.radius * 0.8, m.radius * 0.2);
+            ctx.fillRect(-m.radius * 0.1, -m.radius * 0.4, m.radius * 0.2, m.radius * 0.8);
+
+        } else {
+            // Normal / Ranged / Boss
+            // 基础身体 (圆形变形)
+            ctx.beginPath();
+            if (m.isBoss) {
+                // Boss 有刺
+                for (let i = 0; i < 12; i++) {
+                    const a = i * Math.PI / 6;
+                    // 交替产生尖刺
+                    const r = m.radius + (i % 2 === 0 ? 8 : 0);
+                    const px = Math.cos(a) * r;
+                    const py = Math.sin(a) * r;
+                    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+            } else {
+                ctx.arc(0, 0, m.radius, 0, Math.PI * 2);
+            }
+
+            // 径向渐变
+            const grad = ctx.createRadialGradient(m.radius * 0.3, -m.radius * 0.3, 0, 0, 0, m.radius);
+            grad.addColorStop(0, lightenColor(color, 20)); // 从原纯色改为稍微亮一点
+            grad.addColorStop(1, color);
+            ctx.fillStyle = grad;
+            ctx.fill();
+            ctx.stroke();
+
+            // 画脚 (触手或简单的黑影)
+            ctx.fillStyle = darkenColor(color, 50);
+            const numFeet = m.isBoss ? 6 : 4;
+            for (let i = 0; i < numFeet; i++) {
+                const footSide = i < numFeet / 2 ? -1 : 1;
+                const footOffset = (i % (numFeet / 2)) * 10 - (numFeet / 4) * 10 + 5;
+                ctx.beginPath();
+                // 怪物侧面的脚本迈步
+                const footStepX = isMoving ? Math.sin(time / 80 + i) * 6 : 0;
+                ctx.arc(footStepX, footSide * m.radius * 0.8 + footOffset * 0.3, m.radius * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // --- 眼睛 ---
+            ctx.shadowBlur = 0; // 关闭阴影画眼睛
+            if (!m.isBoss) {
+                // 怪物独眼（非Boss），朝向右前方 (0度是移动方向，稍作旋转还原以看着正面)
+                ctx.rotate(-m.visualAngle);
+                ctx.beginPath();
+                ctx.arc(0, -m.radius * 0.2, m.radius * 0.5, 0, Math.PI * 2);
+                ctx.fillStyle = 'white';
+                ctx.fill();
+
+                // 黑色瞳孔
+                ctx.beginPath();
+                ctx.arc(Math.sin(time / 1000) * 2, -m.radius * 0.2 + Math.cos(time / 1000) * 2, m.radius * 0.2, 0, Math.PI * 2);
+                ctx.fillStyle = 'black';
+                ctx.fill();
+                ctx.rotate(m.visualAngle);
+            } else {
+                // Boss 双眼
+                ctx.rotate(-m.visualAngle); // 把角度转回来，这样眼睛看着屏幕下方或者根据需要
+                const eyeOffset = m.radius * 0.3;
+                for (const side of [-1, 1]) {
+                    ctx.beginPath();
+                    ctx.arc(side * eyeOffset, -m.radius * 0.15, m.radius * 0.25, 0, Math.PI * 2);
+                    ctx.fillStyle = '#ff0';
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(side * eyeOffset, -m.radius * 0.15, m.radius * 0.1, 0, Math.PI * 2);
+                    ctx.fillStyle = '#800';
+                    ctx.fill();
+                }
+                ctx.rotate(m.visualAngle);
+            }
+
+            // 如果是远程怪物，画个小的武器/发射口
+            if (m.type === 'ranged') {
+                ctx.fillStyle = '#444';
+                ctx.beginPath();
+                ctx.fillRect(m.radius * 0.6, -2, m.radius * 0.6, 4);
+                ctx.fill();
+            }
+        }
+        ctx.restore();
+    }
+
     // Draw monsters（智能AI增强可视化）
     Object.values(gameState.monsters).forEach(m => {
+        const time = Date.now();
         // Boss 冲刺拖影特效
         if (m.isBoss && m.isDashing) {
+            ctx.save();
+            ctx.globalAlpha = 0.5;
             for (let t = 1; t <= 3; t++) {
                 ctx.beginPath();
                 ctx.arc(m.x - (m.dashVx || 0) * 0.02 * t, m.y - (m.dashVy || 0) * 0.02 * t, m.radius * (1 - t * 0.15), 0, Math.PI * 2);
                 ctx.fillStyle = `rgba(255, 102, 0, ${0.3 - t * 0.08})`;
                 ctx.fill();
             }
+            ctx.globalAlpha = 1.0;
+            ctx.restore();
         }
 
-        // 怪物主体
-        ctx.beginPath();
-        ctx.arc(m.x, m.y, m.radius, 0, Math.PI * 2);
+        // Ranged 怪物攻击预警圈
+        if (m.isCharging && m.chargeRatio !== undefined) {
+            ctx.beginPath();
+            const chargeRadius = m.radius + 5 + 20 * (1 - m.chargeRatio); // 圈子从大变小集中
+            ctx.arc(m.x, m.y, chargeRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255, 50, 50, ${0.3 + m.chargeRatio * 0.7})`;
+            ctx.lineWidth = 2 + m.chargeRatio * 2;
+            ctx.stroke();
 
-        // RAGE 状态颜色脉冲
-        if (m.state === 'rage') {
-            const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 100);
-            ctx.fillStyle = m.isBoss ? `rgba(255, 68, 0, ${pulse})` : `rgba(255, 0, 0, ${pulse})`;
-            ctx.shadowColor = '#f00';
-            ctx.shadowBlur = 25;
-        } else {
-            ctx.fillStyle = m.color;
-            ctx.shadowColor = m.color;
-            ctx.shadowBlur = 15;
+            // 头顶感叹号预警
+            ctx.fillStyle = `rgba(255, 0, 0, ${0.5 + m.chargeRatio * 0.5})`;
+            ctx.font = 'bold 18px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('!', m.x, m.y - m.radius - 8);
         }
-        ctx.fill();
-        ctx.shadowBlur = 0;
 
-        ctx.strokeStyle = m.isBoss ? '#ff0' : '#222';
-        ctx.lineWidth = m.isBoss ? 3 : 2;
-        ctx.stroke();
+        // 绘制带动画效果的怪物主体
+        drawAnimatedMonster(ctx, m, time);
 
         // Boss 皇冠图标
         if (m.isBoss) {
@@ -1201,33 +1617,6 @@ function draw() {
             ctx.font = `${m.radius}px Arial`;
             ctx.textAlign = 'center';
             ctx.fillText('👑', m.x, m.y - m.radius - 4);
-        }
-
-        // 怪物独眼（非Boss）
-        if (!m.isBoss) {
-            ctx.beginPath();
-            ctx.arc(m.x, m.y - m.radius * 0.2, m.radius * 0.5, 0, Math.PI * 2);
-            ctx.fillStyle = 'white';
-            ctx.fill();
-
-            // 黑色瞳孔
-            ctx.beginPath();
-            ctx.arc(m.x + Math.sin(bgOffset * 0.1), m.y - m.radius * 0.2 + Math.cos(bgOffset * 0.1), m.radius * 0.2, 0, Math.PI * 2);
-            ctx.fillStyle = 'black';
-            ctx.fill();
-        } else {
-            // Boss 双眼
-            const eyeOffset = m.radius * 0.3;
-            for (const side of [-1, 1]) {
-                ctx.beginPath();
-                ctx.arc(m.x + side * eyeOffset, m.y - m.radius * 0.15, m.radius * 0.25, 0, Math.PI * 2);
-                ctx.fillStyle = '#ff0';
-                ctx.fill();
-                ctx.beginPath();
-                ctx.arc(m.x + side * eyeOffset, m.y - m.radius * 0.15, m.radius * 0.1, 0, Math.PI * 2);
-                ctx.fillStyle = '#800';
-                ctx.fill();
-            }
         }
 
         // Boss 血条 UI
@@ -1332,6 +1721,48 @@ function draw() {
         });
     }
 
+    // Draw supply boxes
+    if (gameState.supplyBoxes) {
+        Object.values(gameState.supplyBoxes).forEach(box => {
+            ctx.save();
+            ctx.translate(box.x, box.y);
+            // 微微上下浮动
+            const floatY = Math.sin(Date.now() / 200) * 5;
+            ctx.translate(0, floatY);
+
+            // 绘制发光的底座
+            ctx.beginPath();
+            ctx.arc(0, 15, box.radius, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 255, 0, 0.2)';
+            ctx.fill();
+
+            // 箱子主体 (金黄色/橙色)
+            ctx.fillStyle = '#ffaa00';
+            ctx.shadowColor = '#ffaa00';
+            ctx.shadowBlur = 10;
+            ctx.fillRect(-box.radius, -box.radius, box.radius * 2, box.radius * 2);
+
+            // 箱子纹理/边框
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 0;
+            ctx.strokeRect(-box.radius, -box.radius, box.radius * 2, box.radius * 2);
+
+            // 中间写一个大字或者画个十字
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            let iconText = '📦';
+            if (box.type === 'heal') iconText = '❤';
+            else if (box.type === 'shield') iconText = '🛡️';
+            else if (box.type === 'infinite_charge') iconText = '⚡';
+
+            ctx.fillText(iconText, 0, 0);
+            ctx.restore();
+        });
+    }
+
     // Draw arrows
     Object.values(gameState.arrows).forEach(a => {
         // 残影拖拽特效
@@ -1361,6 +1792,12 @@ function draw() {
         ctx.shadowBlur = 8;
         ctx.fill();
         ctx.shadowBlur = 0; // 重置
+
+        // --- 拖尾粒子特效 ---
+        if (Math.random() < 0.4) {
+            const tailColor = a.talent === 'poison' ? '#0f0' : (a.talent === 'lightning' ? '#0ff' : 'rgba(255,255,255,0.6)');
+            spawnParticles(a.x, a.y, tailColor, 1);
+        }
     });
 
     // Draw traps (only visible to owner or spectators)
@@ -1405,6 +1842,183 @@ function draw() {
         }
     }
 
+    // Helper for drawing an animated character
+    function drawAnimatedCharacter(ctx, x, y, radius, color, vx, vy, isMoving, aimAngle, isCharging, chargeRatio, isDashing) {
+        const time = Date.now();
+        const speed = Math.hypot(vx, vy);
+
+        // Determine facing angle (already smoothed and passed as aimAngle)
+        let facingAngle = aimAngle;
+
+        // Walk animation cycles
+        const walkCycle = isMoving ? Math.sin(time / 80 * (speed / 100)) : 0;
+        const idleCycle = Math.sin(time / 400) * 0.05; // Slight breathing
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(facingAngle);
+
+        // --- 拖影特效 (Dash Trail) ---
+        if (isDashing) {
+            ctx.globalAlpha = 0.5;
+            for (let i = 1; i <= 3; i++) {
+                ctx.beginPath();
+                ctx.arc(-vx * i * 0.03, -vy * i * 0.03, radius * (1 - i * 0.1), 0, Math.PI * 2);
+                ctx.fillStyle = color;
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1.0;
+        }
+
+        // --- 脚部 (Feet) ---
+        ctx.fillStyle = darkenColor(color, 40);
+        // Left foot
+        ctx.beginPath();
+        const leftFootStep = isMoving ? walkCycle * 8 : 0;
+        ctx.ellipse(leftFootStep, -radius * 0.5, radius * 0.4, radius * 0.25, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        // Right foot
+        ctx.beginPath();
+        const rightFootStep = isMoving ? -walkCycle * 8 : 0;
+        ctx.ellipse(rightFootStep, radius * 0.5, radius * 0.4, radius * 0.25, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // --- 躯干 (Body) ---
+        // 稍微压扁产生立体/呼吸感
+        ctx.scale(1 + idleCycle, 1 - idleCycle);
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+
+        // 径向渐变让身体更有立体感
+        const grad = ctx.createRadialGradient(radius * 0.3, -radius * 0.3, 0, 0, 0, radius);
+        grad.addColorStop(0, lightenColor(color, 30));
+        grad.addColorStop(1, color);
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.stroke();
+        ctx.scale(1 / (1 + idleCycle), 1 / (1 - idleCycle)); // Restore scale
+
+        // --- 头部/头带 (Head/Headband) ---
+        // 简单加一个带有颜色的护额或眼睛方向指示器，增强朝向感
+        ctx.fillStyle = '#222';
+        ctx.beginPath();
+        // 护额/面罩
+        ctx.arc(radius * 0.5, 0, radius * 0.6, -Math.PI * 0.4, Math.PI * 0.4);
+        ctx.fill();
+
+        // 眼睛
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(radius * 0.7, -radius * 0.25, radius * 0.15, 0, Math.PI * 2);
+        ctx.arc(radius * 0.7, radius * 0.25, radius * 0.15, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 瞳孔
+        ctx.fillStyle = isCharging ? 'red' : 'black';
+        ctx.beginPath();
+        const pupilOffset = isCharging ? radius * 0.8 : radius * 0.75;
+        ctx.arc(pupilOffset, -radius * 0.25, radius * 0.05, 0, Math.PI * 2);
+        ctx.arc(pupilOffset, radius * 0.25, radius * 0.05, 0, Math.PI * 2);
+        ctx.fill();
+
+        // --- 手部及武器 (Hands & Weapon) ---
+        // 左手握弓
+        ctx.fillStyle = '#eeba8c'; // 肤色
+        ctx.beginPath();
+        const leftHandX = radius * 0.8 + (isCharging ? -chargeRatio * 5 + walkCycle * 2 : walkCycle * 2);
+        const leftHandY = -radius * 0.7;
+        ctx.arc(leftHandX, leftHandY, radius * 0.3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // 绘制武器 (简化版弓/弩)
+        ctx.save();
+        ctx.translate(leftHandX, leftHandY);
+        // 如果是蓄力，弓会被拉弯
+        ctx.beginPath();
+        ctx.strokeStyle = '#5c4033'; // 木质颜色
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        // 弓身
+        const bowBend = isCharging ? chargeRatio * 10 : 0;
+        ctx.moveTo(10 - bowBend, -15);
+        ctx.quadraticCurveTo(20, 0, 10 - bowBend, 15);
+        ctx.stroke();
+
+        // 弓弦
+        ctx.beginPath();
+        ctx.strokeStyle = '#ccc';
+        ctx.lineWidth = 1;
+        const stringPull = isCharging ? -15 * chargeRatio : 0;
+        ctx.moveTo(10 - bowBend, -15);
+        ctx.lineTo(stringPull, 0);
+        ctx.lineTo(10 - bowBend, 15);
+        ctx.stroke();
+
+        // 如果在蓄力，画出箭矢搭在弦上
+        if (isCharging) {
+            ctx.beginPath();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 3;
+            ctx.moveTo(stringPull - 5, 0);
+            ctx.lineTo(25, 0); // 伸出弓外
+            ctx.stroke();
+            // 箭头
+            ctx.fillStyle = 'red';
+            ctx.beginPath();
+            ctx.moveTo(25, -3);
+            ctx.lineTo(31, 0);
+            ctx.lineTo(25, 3);
+            ctx.fill();
+        }
+        ctx.restore();
+
+        // 右手 (拉弦手)
+        ctx.beginPath();
+        const rightHandX = isCharging ? radius * 0.1 - chargeRatio * 15 : radius * 0.2 + walkCycle * 2;
+        const rightHandY = radius * 0.7;
+        // 如果蓄力，右手移动到身体中间后方拉弦位置
+        if (isCharging) {
+            ctx.arc(leftHandX - 15 - chargeRatio * 15, leftHandY, radius * 0.3, 0, Math.PI * 2);
+        } else {
+            ctx.arc(rightHandX, rightHandY, radius * 0.3, 0, Math.PI * 2);
+        }
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    // Utility 颜色加深/变亮函数
+    function darkenColor(color, percent) {
+        return adjustColor(color, -percent);
+    }
+    function lightenColor(color, percent) {
+        return adjustColor(color, percent);
+    }
+    function adjustColor(color, percent) {
+        let f = color.split(","), t = percent < 0 ? 0 : 255, p = percent < 0 ? percent * -1 : percent, R = parseInt(f[0].slice(4)), G = parseInt(f[1]), B = parseInt(f[2]);
+        if (f.length == 1) {
+            // Hex fallback, simple parsing
+            if (color[0] === '#') {
+                if (color.length === 4) {
+                    R = parseInt(color[1] + color[1], 16); G = parseInt(color[2] + color[2], 16); B = parseInt(color[3] + color[3], 16);
+                } else {
+                    R = parseInt(color.slice(1, 3), 16); G = parseInt(color.slice(3, 5), 16); B = parseInt(color.slice(5, 7), 16);
+                }
+            } else if (color === 'red') { R = 255; G = 0; B = 0; }
+            else if (color === 'blue') { R = 0; G = 0; B = 255; }
+            else if (color === 'green') { R = 0; G = 128; B = 0; }
+            else if (color === 'yellow') { R = 255; G = 255; B = 0; }
+            else if (color === 'orange') { R = 255; G = 165; B = 0; }
+            else if (color === 'white') { R = 255; G = 255; B = 255; }
+            else { R = 128; G = 128; B = 128; } // fallback gray
+        }
+        return "rgb(" + (Math.round((t - R) * p) + R) + "," + (Math.round((t - G) * p) + G) + "," + (Math.round((t - B) * p) + B) + ")";
+    }
+
     // Draw players
     Object.values(gameState.players).forEach(p => {
         // 在黑暗森林中，如果不是且本人距离过远且几乎没有在移动（潜伏），则不可见被剔除渲染
@@ -1417,13 +2031,19 @@ function draw() {
         }
 
         if (!p.isDead) {
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-            ctx.fillStyle = p.color;
-            ctx.shadowColor = p.color;
-            ctx.shadowBlur = 20;
-            ctx.fill();
-            ctx.shadowBlur = 0;
+            // === 草丛隐身判定 ===
+            const isMe = p.id === myId;
+            if (p.isInvisible) {
+                if (!isMe) {
+                    // 如果对方隐身，且不是自己，跳过渲染 (如果以后加入队伍系统，可允许队友看到)
+                    return;
+                } else {
+                    // 自己隐身时半透明显示
+                    ctx.globalAlpha = 0.4;
+                }
+            } else {
+                ctx.globalAlpha = 1.0;
+            }
 
             // Bot 橙色描边，自己白色描边，其他玩家深色描边
             const isBot = p.id && p.id.startsWith('bot_');
@@ -1432,7 +2052,7 @@ function draw() {
                 ctx.lineWidth = 3;
             } else if (isBot) {
                 ctx.strokeStyle = '#ffa500';
-                ctx.lineWidth = 2;
+                ctx.lineWidth = 2; // Darker stroke for others handled in animated drawing fallback
             } else {
                 ctx.strokeStyle = '#222';
                 ctx.lineWidth = 2;
@@ -1440,7 +2060,53 @@ function draw() {
             if (p.poisonTicks > 0) {
                 ctx.strokeStyle = '#0f0'; // 中毒绿边包围
             }
-            ctx.stroke();
+
+            let targetAimAngle = 0;
+            let chargeRatio = 0;
+            let pIsCharging = false;
+            // Get raw target angle based on intent
+            if (isMe) {
+                // Local player always faces cursor
+                const worldMouseX = screenMouseX + camX;
+                const worldMouseY = screenMouseY + camY;
+                targetAimAngle = Math.atan2(worldMouseY - me.y, worldMouseX - me.x);
+                if (isCharging) {
+                    pIsCharging = true;
+                    const maxMs = getMaxChargeMs();
+                    if (maxMs > 0) {
+                        chargeRatio = Math.min(Date.now() - chargeStartTime, maxMs) / maxMs;
+                    }
+                }
+            } else if (!isMe && p.isCharging) {
+                // 如果后端同步了其他玩家的瞄准方向，这里可以使用 p.aimAngle
+                targetAimAngle = p.aimAngle || Math.atan2(p.vy || 0, p.vx || 1); // fallback
+                pIsCharging = true;
+                chargeRatio = p.chargeRatio || 1;
+            } else if (Math.hypot(p.vx, p.vy) > 0.1) {
+                targetAimAngle = Math.atan2(p.vy, p.vx); // 默认朝向移动方向
+            } else {
+                targetAimAngle = p.visualAngle || 0; // 没动也没蓄力保持原方向
+            }
+
+            // 平滑插值 (Lerp) 朝向角度，解决纯键盘只有8个方向的僵硬感
+            if (p.visualAngle === undefined) {
+                p.visualAngle = targetAimAngle;
+            } else {
+                let delta = targetAimAngle - p.visualAngle;
+                while (delta > Math.PI) delta -= Math.PI * 2;
+                while (delta < -Math.PI) delta += Math.PI * 2;
+                p.visualAngle += delta * 0.25;
+            }
+
+            const speed = Math.hypot(p.vx, p.vy);
+            const isMoving = speed > 5;
+
+            // 将十六进制或预设颜色转换为格式化颜色以备调节亮度使用
+            // 简单处理确保颜色有效
+            let renderColor = p.color;
+
+            // 绘制动画角色，将平滑后的视界角度传给 aimAngle 参数
+            drawAnimatedCharacter(ctx, p.x, p.y, p.radius, renderColor, p.vx, p.vy, isMoving, p.visualAngle, pIsCharging, chargeRatio, p.isDashing);
 
             // 护盾环绕特效
             if (p.hasShield) {
@@ -1492,6 +2158,26 @@ function draw() {
                 }
             }
 
+            // === 体力条 ===
+            if (p.maxStamina && p.maxStamina > 0) {
+                const barW = p.radius * 2.2;
+                const barH = 3;
+                const barX = p.x - barW / 2;
+                const barY = p.y - p.radius - 3; // 放在血条下方 (血条在 -8 的位置, 高 4)
+                const staRatio = (p.stamina || 0) / p.maxStamina;
+
+                // 背景
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fillRect(barX, barY, barW, barH);
+                // 体力颜色 (黄色/橙色)
+                ctx.fillStyle = '#fdb813';
+                ctx.fillRect(barX, barY, barW * staRatio, barH);
+                // 外框
+                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 0.5;
+                ctx.strokeRect(barX, barY, barW, barH);
+            }
+
             // 无敌帧闪烁效果（重生后金色光环更醒目）
             if (p.invincible) {
                 ctx.beginPath();
@@ -1501,6 +2187,9 @@ function draw() {
                 ctx.lineWidth = 2;
                 ctx.stroke();
             }
+
+            // 恢复透明度（防污染）
+            ctx.globalAlpha = 1.0;
         } else if (p.id === myId) {
             // 死亡提示改为在 UI 层绘制（见下方 UI 叠加层）
         }
@@ -1570,7 +2259,9 @@ function draw() {
         visualSpread += (targetSpread - visualSpread) * Math.min(1, dt * 5);
         const spreadHalf = visualSpread;
 
-        const aimAngle = Math.atan2(chargeMouseY - me.y, chargeMouseX - me.x);
+        const worldMouseX = screenMouseX + camX;
+        const worldMouseY = screenMouseY + camY;
+        const aimAngle = Math.atan2(worldMouseY - me.y, worldMouseX - me.x);
         // 补偿客户端 lerp 插值滞后：箭矢视觉位置永远落后真实位置约 speed/lerpCoeff 像素
         // lerpCoeff = 15（draw 函数中 dt * 15），箭矢消亡时视觉还没到终点
         const lerpLag = arrowSpeed / 15;
@@ -1737,6 +2428,64 @@ function draw() {
         ctx.shadowBlur = 0;
 
         if (ft.life <= 0) floatingTexts.splice(i, 1);
+    }
+
+    // 绘制空投预警 (在UI层/跟随屏幕或者大世界坐标随心选择)
+    if (supplyDropAlert && gameState.state === 'playing') {
+        supplyDropAlert.timer -= dt;
+
+        ctx.save();
+        ctx.translate(supplyDropAlert.x - camX, supplyDropAlert.y - camY);
+
+        // 外圈红光收缩
+        ctx.beginPath();
+        const alertRadius = 100 + supplyDropAlert.timer * 50;
+        ctx.arc(0, 0, alertRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 50, 50, ${0.3 + 0.5 * Math.sin(Date.now() / 100)})`;
+        ctx.lineWidth = 4;
+        ctx.setLineDash([10, 10]);
+        ctx.stroke();
+
+        // 中心准星
+        ctx.beginPath();
+        ctx.arc(0, 0, 10, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+        ctx.fill();
+
+        // 倒计时文字
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 20px Inter';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = 'red';
+        ctx.shadowBlur = 5;
+        ctx.fillText(`空投即将降落: ${supplyDropAlert.timer.toFixed(1)}s`, 0, -30);
+
+        ctx.restore();
+
+        // 如果我离它很远，在我的屏幕边缘画个指向标
+        if (me && !me.isDead) {
+            const dist = Math.hypot(supplyDropAlert.x - me.x, supplyDropAlert.y - me.y);
+            if (dist > VIEW_WIDTH / 2) {
+                const angle = Math.atan2(supplyDropAlert.y - me.y, supplyDropAlert.x - me.x);
+                const indicatorX = VIEW_WIDTH / 2 + Math.cos(angle) * (VIEW_WIDTH / 2 - 50);
+                const indicatorY = VIEW_HEIGHT / 2 + Math.sin(angle) * (VIEW_HEIGHT / 2 - 50);
+
+                ctx.save();
+                ctx.translate(indicatorX, indicatorY);
+                ctx.rotate(angle);
+                ctx.beginPath();
+                ctx.moveTo(10, 0);
+                ctx.lineTo(-10, -10);
+                ctx.lineTo(-10, 10);
+                ctx.fillStyle = 'orange';
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        if (supplyDropAlert.timer <= 0) {
+            supplyDropAlert = null;
+        }
     }
 
     // 绘制闪电链特效

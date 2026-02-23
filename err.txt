@@ -1,0 +1,9 @@
+c:\2\arrows\public\editor.js:1100
+    function hitTestWall(wx, wy) {
+    ^^^^^^^^
+
+SyntaxError: Unexpected token 'function'
+    at wrapSafe (node:internal/modules/cjs/loader:1735:18)
+    at checkSyntax (node:internal/main/check_syntax:76:3)
+
+Node.js v24.13.1

@@ -134,8 +134,8 @@ class BotBrain {
 
         // === 闪避位移 ===
         if (this.evadeTimer > 0) {
-            player.vx = this.evadeVx;
-            player.vy = this.evadeVy;
+            player.inputVx = this.evadeVx;
+            player.inputVy = this.evadeVy;
             // 闪避期间不执行其他逻辑
             return;
         } else if (this.state === 'EVADE') {
@@ -164,6 +164,9 @@ class BotBrain {
             case 'LOOT':
                 this._doLoot(dt, player, gameState);
                 break;
+            case 'ESCAPE':
+                this._doEscape(dt, player, gameState);
+                break;
         }
     }
 
@@ -171,7 +174,17 @@ class BotBrain {
     //  状态评估 — 决定当前应处于什么状态
     // ============================================================
     _evaluate(player, gameState) {
-        // 优先级：EVADE(已在上面处理) > ENGAGE(玩家) > ENGAGE(怪物) > LOOT > PATROL
+        // 优先级：EVADE(已在上面处理) > ESCAPE(濒死) > ENGAGE(玩家) > ENGAGE(怪物) > LOOT > PATROL
+
+        // 生死攸关：如果血量极低，优先找草丛隐藏或找跳板逃生
+        if (player.hp <= 1 || (player.hp / player.maxHp <= 0.35)) {
+            const escapeRoute = this._findEscapeRoute(player, gameState);
+            if (escapeRoute) {
+                this.state = 'ESCAPE';
+                this.escapeTarget = escapeRoute;
+                return;
+            }
+        }
 
         // 寻找最近的敌方玩家
         const nearestEnemy = this._findNearestEnemy(player, gameState);
@@ -222,8 +235,8 @@ class BotBrain {
         const distToTarget = distanceBetween(player, this.patrolTarget);
         if (distToTarget < 50) {
             this.patrolWaitTimer -= dt;
-            player.vx = 0;
-            player.vy = 0;
+            player.inputVx = 0;
+            player.inputVy = 0;
             if (this.patrolWaitTimer <= 0) {
                 this.patrolTarget = this._randomPatrolPoint();
                 this.patrolWaitTimer = randomRange(0.5, 2.0);
@@ -236,8 +249,8 @@ class BotBrain {
         const dy = this.patrolTarget.y - player.y;
         const len = Math.hypot(dx, dy);
         if (len > 0) {
-            player.vx = (dx / len) * player.speed * 0.6; // 巡逻时不全速
-            player.vy = (dy / len) * player.speed * 0.6;
+            player.inputVx = (dx / len) * player.speed * 0.6; // 巡逻时不全速
+            player.inputVy = (dy / len) * player.speed * 0.6;
         }
     }
 
@@ -283,8 +296,8 @@ class BotBrain {
         if (len > 0) {
             const jitter = (Math.random() - 0.5) * 0.3;
             const angle = Math.atan2(dy, dx) + jitter;
-            player.vx = Math.cos(angle) * player.speed;
-            player.vy = Math.sin(angle) * player.speed;
+            player.inputVx = Math.cos(angle) * player.speed;
+            player.inputVy = Math.sin(angle) * player.speed;
         }
     }
 
@@ -309,10 +322,14 @@ class BotBrain {
         const dx = target.x - player.x;
         const dy = target.y - player.y;
         const len = Math.hypot(dx, dy);
-        if (len > 0) {
-            // 蓄力时非常缓慢地跟踪移动
-            player.vx = (dx / len) * player.speed * 0.15;
-            player.vy = (dy / len) * player.speed * 0.15;
+        const dist = len; // Use len as dist
+        if (dist > 50) {
+            // 蓄力时缓慢移动 (如 15% 速度)
+            player.inputVx = (dx / len) * player.speed * 0.15;
+            player.inputVy = (dy / len) * player.speed * 0.15;
+        } else {
+            player.inputVx = 0;
+            player.inputVy = 0;
         }
 
         // 蓄力完成 → 开火
@@ -417,16 +434,77 @@ class BotBrain {
         const dx = target.x - player.x;
         const dy = target.y - player.y;
         const len = Math.hypot(dx, dy);
-        if (len > 0) {
-            player.vx = (dx / len) * player.speed;
-            player.vy = (dy / len) * player.speed;
+        if (dist > 30) { // 稍微留点距离，防止鬼畜
+            player.inputVx = (dx / len) * player.speed;
+            player.inputVy = (dy / len) * player.speed;
+        } else {
+            player.inputVx = 0;
+            player.inputVy = 0;
         }
-
-        // Buff 类道具会在碰撞时自动拾取（由 server.js 主循环处理）
         // 如果太远了就放弃
         if (dist > this.params.sightRange) {
             this.state = 'PATROL';
             this.lootTargetId = null;
+        }
+    }
+
+    // ============================================================
+    //  ESCAPE — 逃往跳板或草丛
+    // ============================================================
+    _findEscapeRoute(player, gameState) {
+        let best = null;
+        let minDist = this.params.sightRange * 1.5; // 可以稍微找远点
+
+        if (gameState.bushes && Array.isArray(gameState.bushes)) {
+            for (const bush of gameState.bushes) {
+                const dist = distanceBetween(player, bush);
+                if (dist < minDist) {
+                    minDist = dist;
+                    best = { x: bush.x, y: bush.y, type: 'bush' };
+                }
+            }
+        }
+
+        if (gameState.jumpPads && Array.isArray(gameState.jumpPads)) {
+            for (const pad of gameState.jumpPads) {
+                const dist = distanceBetween(player, pad);
+                if (dist < minDist) {
+                    minDist = dist;
+                    best = { x: pad.x, y: pad.y, type: 'pad' };
+                }
+            }
+        }
+        return best;
+    }
+
+    _doEscape(dt, player, gameState) {
+        this.isCharging = false;
+        player.speed = player.baseSpeed;
+
+        if (!this.escapeTarget) {
+            this.state = 'PATROL';
+            return;
+        }
+
+        const dx = this.escapeTarget.x - player.x;
+        const dy = this.escapeTarget.y - player.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < (this.escapeTarget.type === 'bush' ? 20 : 10)) {
+            player.inputVx = 0;
+            player.inputVy = 0;
+
+            // 躲在草丛里苟一会儿
+            this.escapeWaitTimer = (this.escapeWaitTimer || 0) + dt;
+            if (this.escapeWaitTimer > 4.0 || player.hp >= player.maxHp) {
+                this.escapeWaitTimer = 0;
+                this.escapeTarget = null;
+                this.state = 'PATROL';
+            }
+        } else {
+            this.escapeWaitTimer = 0;
+            player.inputVx = (dx / dist) * player.speed;
+            player.inputVy = (dy / dist) * player.speed;
         }
     }
 
@@ -468,7 +546,7 @@ class BotBrain {
         let minDist = Infinity;
 
         for (const [id, other] of Object.entries(gameState.players)) {
-            if (id === this.playerId || other.isDead) continue;
+            if (id === this.playerId || other.isDead || other.isInvisible) continue;
             const dist = distanceBetween(player, other);
             if (dist < minDist) {
                 minDist = dist;
@@ -502,7 +580,7 @@ class BotBrain {
             return gameState.monsters[this.targetPlayerId] || null;
         }
         const p = gameState.players[this.targetPlayerId];
-        return (p && !p.isDead) ? p : null;
+        return (p && !p.isDead && !p.isInvisible) ? p : null;
     }
 
     /** 寻找最近的可拾取物品（Buff 或 蜜蜂） */

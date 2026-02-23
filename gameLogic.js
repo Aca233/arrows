@@ -14,6 +14,8 @@ class Player {
         this.speed = 220; // 稍微提速
         this.vx = 0;
         this.vy = 0;
+        this.inputVx = 0;
+        this.inputVy = 0;
         this.score = 0;
         this.isDead = false;
         this.respawnTimer = 0;
@@ -38,6 +40,20 @@ class Player {
         // 中毒状态
         this.poisonTicks = 0;
         this.poisonTimer = 0;
+
+        // === 高级移动机制 (Dash) ===
+        this.isDashing = false;
+        this.dashCooldown = 0;
+        this.dashTimer = 0;
+        this.dashVx = 0;
+        this.dashVy = 0;
+
+        // === 补充物理移动相关 ===
+        this.invincibleTimer = 0; // 无敌帧时间
+
+        // === 体力系统 (Stamina) ===
+        this.maxStamina = 100;
+        this.stamina = 100;
     }
 
     updatePosition(dt) {
@@ -53,8 +69,51 @@ class Player {
             }
         }
 
-        this.x += this.vx * dt;
-        this.y += this.vy * dt;
+        // === 冲刺系统更新 ===
+        if (this.dashCooldown > 0) {
+            this.dashCooldown -= dt;
+        }
+
+        if (this.invincibleTimer > 0) {
+            this.invincibleTimer -= dt;
+        }
+
+        // === 体力恢复 (Stamina Regeneration) ===
+        if (this.stamina < this.maxStamina) {
+            this.stamina = Math.min(this.maxStamina, this.stamina + 15 * dt); // 每秒恢复 15 点体力
+        }
+
+        if (this.isDashing) {
+            this.dashTimer -= dt;
+            this.x += this.dashVx * dt;
+            this.y += this.dashVy * dt;
+            if (this.dashTimer <= 0) {
+                this.isDashing = false;
+                // 从冲刺状态恢复时，速度重置（处理蓄力减速）
+                if (this.isCharging) {
+                    this.speed = this.baseSpeed * 0.4;
+                } else if (this.buffExp > 0 && this.hasMultishot) {
+                    // 如果有其它加速buff逻辑可放在这里
+                    this.speed = this.baseSpeed;
+                } else {
+                    this.speed = this.baseSpeed;
+                }
+            }
+        } else {
+            // 普通移动 (带加速度和摩擦力物理机制)
+            const acceleration = 2500;
+            const targetVx = typeof this.inputVx !== 'undefined' ? this.inputVx : 0;
+            const targetVy = typeof this.inputVy !== 'undefined' ? this.inputVy : 0;
+
+            if (this.vx < targetVx) this.vx = Math.min(this.vx + acceleration * dt, targetVx);
+            else if (this.vx > targetVx) this.vx = Math.max(this.vx - acceleration * dt, targetVx);
+
+            if (this.vy < targetVy) this.vy = Math.min(this.vy + acceleration * dt, targetVy);
+            else if (this.vy > targetVy) this.vy = Math.max(this.vy - acceleration * dt, targetVy);
+
+            this.x += this.vx * dt;
+            this.y += this.vy * dt;
+        }
 
         // Boundaries
         this.x = Math.max(this.radius, Math.min(this.x, GAME_WIDTH - this.radius));
@@ -176,6 +235,11 @@ class Monster {
         // === 群体协作索引（由外部 server 循环赋值） ===
         this.flankIndex = 0;
         this.flankGroupSize = 1;
+
+        // === 补充：受击反馈 ===
+        this.knockbackVx = 0;
+        this.knockbackVy = 0;
+        this.stunTimer = 0;
     }
 
     // 预判玩家位置：根据玩家当前速度预测未来 lookAhead 秒后的坐标
@@ -204,6 +268,36 @@ class Monster {
         walls = walls || [];
         allMonsters = allMonsters || [];
         arrows = arrows || [];
+
+        // === 受击击退与眩晕 ===
+        if (this.stunTimer > 0) {
+            this.stunTimer -= dt;
+        }
+
+        if (Math.abs(this.knockbackVx) > 5 || Math.abs(this.knockbackVy) > 5) {
+            this.x += this.knockbackVx * dt;
+            this.y += this.knockbackVy * dt;
+
+            // 摩擦力衰减
+            const friction = 2500;
+            const kbLen = Math.hypot(this.knockbackVx, this.knockbackVy);
+            if (kbLen > 0) {
+                const drop = friction * dt;
+                const newLen = Math.max(0, kbLen - drop);
+                this.knockbackVx = (this.knockbackVx / kbLen) * newLen;
+                this.knockbackVy = (this.knockbackVy / kbLen) * newLen;
+            }
+
+            // 撞墙判定与边界限制
+            for (const wall of walls) resolveCircleRectCollision(this, wall);
+            this.x = Math.max(this.radius, Math.min(this.x, GAME_WIDTH - this.radius));
+            this.y = Math.max(this.radius, Math.min(this.y, GAME_HEIGHT - this.radius));
+
+            // 如果仍在击退甚至眩晕中，则暂时跳过主动AI逻辑
+            if (this.stunTimer > 0) return;
+        } else if (this.stunTimer > 0) {
+            return;
+        }
 
         // === Boss 冲刺更新 ===
         if (this.isBoss) {
@@ -278,7 +372,7 @@ class Monster {
         let minDist = Infinity;
         let target = null;
         for (const [id, player] of Object.entries(players)) {
-            if (player.isDead) continue;
+            if (player.isDead || player.isInvisible) continue;
             const dist = Math.hypot(player.x - this.x, player.y - this.y);
             if (dist < minDist) {
                 minDist = dist;
@@ -479,6 +573,28 @@ class Wall {
     }
 }
 
+class Bush {
+    constructor(id, x, y, radius) {
+        this.id = id;
+        this.x = x;
+        this.y = y;
+        this.radius = radius;
+    }
+}
+
+class JumpPad {
+    constructor(id, x, y, radius, dirX, dirY, power = 1000) {
+        this.id = id;
+        this.x = x;
+        this.y = y;
+        this.radius = radius;
+        this.dirX = dirX; // normalized X
+        this.dirY = dirY; // normalized Y
+        this.power = power;
+        this.cooldowns = {}; // 记录对不同玩家的冷却 { playerId: timer }
+    }
+}
+
 // === 新增：传送门 ===
 class Portal {
     constructor(id, x, y, targetId, radius = 30) {
@@ -534,6 +650,19 @@ class BuffDrop {
         this.type = type; // 'sprint' or 'multishot'
         this.color = type === 'sprint' ? 'cyan' : 'orange';
         this.lifeTime = 10; // 存在时间
+    }
+}
+
+// 动态全图事件掉落的高级补给箱
+class SupplyBox {
+    constructor(id, x, y, type) {
+        this.id = id;
+        this.x = x;
+        this.y = y;
+        this.radius = 20; // 稍大一点
+        // 'heal' (回血/加生命上限), 'shield' (抵挡一次伤害护盾), 'infinite_charge' (10秒内无限蓄力)
+        this.type = type;
+        this.lifeTime = 30; // 存活 30 秒，没人捡就消失
     }
 }
 
@@ -657,7 +786,7 @@ const WEAPONS = {
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-        Player, Arrow, Monster, Wall, TargetBee, BuffDrop, Trap, Portal, PoisonZone,
+        Player, Arrow, Monster, Wall, TargetBee, BuffDrop, SupplyBox, Trap, Portal, PoisonZone, Bush, JumpPad,
         checkCollision, checkCircleRectCollision, resolveCircleRectCollision, raycastWall, WEAPONS
     };
 } else {
@@ -667,6 +796,9 @@ if (typeof module !== 'undefined' && module.exports) {
     window.Monster = Monster;
     window.Portal = Portal;
     window.PoisonZone = PoisonZone;
+    window.Bush = Bush;
+    window.JumpPad = JumpPad;
+    window.SupplyBox = SupplyBox;
     window.WEAPONS = WEAPONS;
     // Expose other utilities if needed
 }
