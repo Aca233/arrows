@@ -54,6 +54,7 @@ class Player {
         // === 体力系统 (Stamina) ===
         this.maxStamina = 100;
         this.stamina = 100;
+        this.isCharging = false;
     }
 
     updatePosition(dt) {
