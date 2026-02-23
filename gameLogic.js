@@ -79,7 +79,10 @@ class Player {
         }
 
         // === 体力恢复 (Stamina Regeneration) ===
-        if (this.stamina < this.maxStamina) {
+        if (this.isCharging) {
+            // 蓄力期间扣除体力
+            this.stamina = Math.max(0, this.stamina - 15 * dt);
+        } else if (this.stamina < this.maxStamina) {
             this.stamina = Math.min(this.maxStamina, this.stamina + 15 * dt); // 每秒恢复 15 点体力
         }
 

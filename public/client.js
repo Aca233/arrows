@@ -768,6 +768,11 @@ let visualSpread = 0; // 视觉上的散布角（平滑插值用）
 
 canvas.addEventListener('mousedown', (e) => {
     if (window.initAudio) window.initAudio(); // 用户必须交互一次才能在浏览器播音
+
+    // 如果体力不足，无法蓄力
+    const me = gameState.players[myId];
+    if (me && me.stamina <= 0) return;
+
     // 按下鼠标开始蓄力
     chargeStartTime = Date.now();
     isCharging = true;
@@ -784,16 +789,15 @@ canvas.addEventListener('mousemove', (e) => {
     screenMouseY = (e.clientY - rect.top) * (canvas.height / window.devicePixelRatio / rect.height);
 });
 
-canvas.addEventListener('mouseup', (e) => {
+// 提取强制发射逻辑，用于体力耗尽时自动射出
+function forceReleaseCharge() {
     if (!isCharging) return;
     isCharging = false;
-    socket.emit('charge_end'); // 通知服务端蓄力结束（恢复速度）
+    socket.emit('charge_end');
 
-    // 屏幕坐标 + 摄像机偏移 = 世界坐标
     const x = screenMouseX + camX;
     const y = screenMouseY + camY;
 
-    // 飞镖无需蓄力直接满状态发射，其它按配置判断
     let chargeRatio = 1;
     const maxMs = getMaxChargeMs();
     if (maxMs > 0) {
@@ -801,9 +805,7 @@ canvas.addEventListener('mouseup', (e) => {
         chargeRatio = chargeMs / maxMs;
     }
 
-    // 判断当前是否在移动（WASD 有任意按键按下）
     const isMoving = keys.w || keys.a || keys.s || keys.d;
-
     const me = gameState.players[myId];
     if (me) {
         playLocalShootFeedback(me.x, me.y, x, y, Math.max(chargeRatio, me.infiniteChargeTimer > 0 ? 1 : 0));
@@ -811,6 +813,10 @@ canvas.addEventListener('mouseup', (e) => {
 
     if (window.SoundFX) SoundFX.shoot();
     socket.emit('shoot', { x, y, charge: chargeRatio, moving: isMoving });
+}
+
+canvas.addEventListener('mouseup', (e) => {
+    forceReleaseCharge();
 });
 
 // === 移动端触控/双摇杆逻辑 ===
@@ -851,6 +857,10 @@ function handleTouchStart(e, isLeft) {
             rightBase.style.left = rightCenter.x + 'px';
             rightBase.style.top = rightCenter.y + 'px';
             rightKnob.style.transform = 'translate(-50%, -50%)';
+
+            // 如果体力不足，无法蓄力
+            const me = gameState.players[myId];
+            if (me && me.stamina <= 0) return;
 
             // 开始蓄力
             chargeStartTime = Date.now();
@@ -1147,6 +1157,13 @@ function draw() {
     // 平滑插值跟踪
     camX += (camTargetX - camX) * Math.min(1, dt * CAM_LERP);
     camY += (camTargetY - camY) * Math.min(1, dt * CAM_LERP);
+
+    // === 体力耗尽强制发射检查 ===
+    if (me && isCharging && me.stamina <= 0) {
+        // 使用屏幕坐标和摄像机坐标辅助模拟鼠标位置
+        // 如果是右摇杆触控，screenMouseX/Y 已经在 touchmove 中更新为了指示方向
+        forceReleaseCharge();
+    }
 
     // 缓动时间记录用于动态背景
     bgOffset += 0.5;

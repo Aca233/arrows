@@ -379,6 +379,7 @@ io.on('connection', (socket) => {
 
         const player = room.players[socket.id];
         if (player && !player.isDead) {
+            if (player.stamina <= 0) return; // 体力耗尽无法蓄力
             player.isCharging = true;
             player.speed = player.baseSpeed * 0.4;
         }
